@@ -1,6 +1,8 @@
-# Terminal Core Module
+# KiyoriTerminalCore
 
-This is a standalone Android module that provides the core functionality for the `Operit Terminal` application. It is designed as a reusable component, exposing its features through a centralized `TerminalManager` and a corresponding AIDL interface for inter-process communication.
+KiyoriTerminalCore is the Android terminal library maintained for [Kiyori](https://github.com/Kiyori-CN/Kiyori). It is designed as a reusable component, exposing its features through a centralized `TerminalManager` and corresponding AIDL interfaces for inter-process communication.
+
+This repository is derived from [AAswordman/OperitTerminalCore](https://github.com/AAswordman/OperitTerminalCore). Upstream authorship, contribution history, and license terms remain intact. Kiyori-specific development is maintained on this repository's `main` branch.
 
 ## Module Responsibilities
 
@@ -27,4 +29,6 @@ The `terminal-core` module is responsible for the following core tasks:
 
 ## Usage
 
-This module can be integrated as a Git Submodule. The client application can either bind to the `TerminalService` for background operation and IPC, or directly access the `TerminalManager` singleton if running in the same process. Refer to the main project's `README.md` for a detailed example of the AIDL interface. 
+Kiyori integrates this repository as the `terminal` Git submodule and pins an exact commit for reproducible builds. A client can bind to `TerminalService` for background operation and IPC, or access the `TerminalManager` singleton directly when running in the same process.
+
+Repository branding does not rename the inherited `com.ai.assistance.operit.terminal` namespace or AIDL contracts. Those identifiers remain compatibility boundaries; see [CONTEXT.md](CONTEXT.md).

@@ -61,16 +61,12 @@ fun SettingsScreen(
     val viewModel: SettingsViewModel = viewModel { SettingsViewModel(context.applicationContext as android.app.Application) }
     
     val cacheSize by viewModel.cacheSize.collectAsState()
-    val updateStatus by viewModel.updateStatus.collectAsState()
     val isCalculatingCache by viewModel.isCalculatingCache.collectAsState()
     
     // FTP服务器相关状态
     val ftpServerStatus by viewModel.ftpServerStatus.collectAsState()
     val isFtpServerRunning by viewModel.isFtpServerRunning.collectAsState()
     val isManagingFtpServer by viewModel.isManagingFtpServer.collectAsState()
-    
-    // 更新相关状态
-    val hasUpdateAvailable by viewModel.hasUpdateAvailable.collectAsState()
     
     // 源管理相关状态
     val sourceConfigs by viewModel.sourceConfigs.collectAsState()
@@ -316,19 +312,20 @@ fun SettingsScreen(
                         color = SettingsTheme.onSurfaceVariant,
                         fontSize = 14.sp
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = updateStatus,
-                        color = if (hasUpdateAvailable) SettingsTheme.primaryColor else SettingsTheme.onSurfaceVariant,
-                        fontSize = 12.sp
-                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedButton(
-                            onClick = { viewModel.openGitHubRepo() },
+                            onClick = {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse("https://github.com/Kiyori-CN/Kiyori")
+                                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            },
                             enabled = true,
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.outlinedButtonColors(
@@ -339,29 +336,6 @@ fun SettingsScreen(
                             Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(context.getString(com.ai.assistance.operit.terminal.R.string.visit_project))
-                        }
-                        
-                        Button(
-                            onClick = { 
-                                if (hasUpdateAvailable) {
-                                    viewModel.openGitHubReleases()
-                                } else {
-                                    viewModel.checkForUpdates()
-                                }
-                            },
-                            enabled = true,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (hasUpdateAvailable) SettingsTheme.primaryColor else SettingsTheme.surfaceColor
-                            ),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            if (hasUpdateAvailable) {
-                                Icon(Icons.Default.GetApp, contentDescription = null, modifier = Modifier.size(16.dp))
-                            } else {
-                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (hasUpdateAvailable) context.getString(com.ai.assistance.operit.terminal.R.string.update_now) else context.getString(com.ai.assistance.operit.terminal.R.string.check_updates))
                         }
                     }
                 }

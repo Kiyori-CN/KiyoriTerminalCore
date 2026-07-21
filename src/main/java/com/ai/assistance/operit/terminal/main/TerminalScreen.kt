@@ -46,31 +46,23 @@ import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.ui.SetupScreen
 import com.ai.assistance.operit.terminal.ui.TerminalHome
 import com.ai.assistance.operit.terminal.ui.SettingsScreen
-import com.ai.assistance.operit.terminal.utils.UpdateChecker
-import kotlinx.coroutines.launch
-import androidx.compose.runtime.rememberCoroutineScope
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun TerminalScreen(
     env: TerminalEnv,
     useLocalImeHandling: Boolean = true,
-    checkUpdatesOnEnter: Boolean = true,
 ) {
     val context = LocalContext.current
     val hostActivity = remember(context) { context.findActivity() }
     val manifestSoftInputMode = remember(hostActivity) { hostActivity?.manifestSoftInputMode() }
     val navController = rememberNavController()
-    val coroutineScope = rememberCoroutineScope()
     var startDestination by remember { mutableStateOf<String?>(null) }
 
     val manager = remember { TerminalManager.getInstance(context) }
     val terminalState by manager.terminalState.collectAsState()
     val isTerminalReady = terminalState.currentSession?.isInitializing == false
     
-    // 更新检查器
-    val updateChecker = remember { UpdateChecker(context) }
-
     DisposableEffect(hostActivity, manifestSoftInputMode, useLocalImeHandling) {
         if (useLocalImeHandling) {
             hostActivity?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
@@ -94,11 +86,6 @@ fun TerminalScreen(
             else -> TerminalRoutes.TERMINAL_HOME_ROUTE
         }
         
-        if (checkUpdatesOnEnter) {
-            coroutineScope.launch {
-                updateChecker.checkForUpdates(showToast = true)
-            }
-        }
     }
 
     // 使用 NavHost 处理所有导航

@@ -78,10 +78,8 @@
     
     <!-- Project Section -->
     <string name="project_address_title">项目地址</string>
-    <string name="project_name">AAswordman/OperitTerminal</string>
+    <string name="project_name">Kiyori-CN/Kiyori</string>
     <string name="visit_project">访问</string>
-    <string name="check_updates">检查</string>
-    <string name="update_now">更新</string>
     
     <!-- Reset Environment Dialog -->
     <string name="reset_dialog_title">⚠️ 危险操作</string>
@@ -95,7 +93,6 @@
     
     <!-- SettingsViewModel -->
     <string name="cache_size_default">点击刷新计算</string>
-    <string name="update_status_default">点击检查更新</string>
     <string name="ftp_server_not_running">FTP服务器未运行</string>
     <string name="cache_calculating">计算中…</string>
     <string name="cache_calculation_cancelled">计算已取消</string>
@@ -103,10 +100,6 @@
     <string name="environment_resetting">正在重置环境…</string>
     <string name="environment_reset_complete">环境已重置 (需要重启应用)</string>
     <string name="environment_reset_failed">重置失败: %s</string>
-    <string name="checking_updates">检查更新中…</string>
-    <string name="update_available">发现新版本: %1$s (当前: %2$s)</string>
-    <string name="up_to_date">已是最新版本 (%s)</string>
-    <string name="update_check_failed">检查失败: %s</string>
     <string name="ftp_server_starting">正在启动FTP服务器…</string>
     <string name="ftp_server_start_failed_env">启动失败 (请确保Ubuntu环境已初始化)</string>
     <string name="ftp_server_start_failed">启动失败: %s</string>
@@ -131,8 +124,6 @@
     
     <!-- Additional new strings -->
     <string name="initializing">正在初始化...</string>
-    <string name="new_version_found">发现新版本: %1$s</string>
-    <string name="update_check_failed_short">检查更新失败</string>
     <string name="cannot_open_browser">无法打开浏览器</string>
     <string name="ftp_server_running_info">FTP服务器正在运行\n地址: %1$s:%2$s\n用户名: %3$s\n密码: %4$s\n根目录: Ubuntu文件系统</string>
     <string name="unknown_session">未知会话</string>

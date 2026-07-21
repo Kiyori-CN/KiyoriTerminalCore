@@ -78,10 +78,8 @@
     
     <!-- Project Section -->
     <string name="project_address_title">Project Repository</string>
-    <string name="project_name">AAswordman/OperitTerminal</string>
+    <string name="project_name">Kiyori-CN/Kiyori</string>
     <string name="visit_project">Visit</string>
-    <string name="check_updates">Check</string>
-    <string name="update_now">Update</string>
     
     <!-- Reset Environment Dialog -->
     <string name="reset_dialog_title">⚠️ Dangerous Operation</string>
@@ -95,7 +93,6 @@
     
     <!-- SettingsViewModel -->
     <string name="cache_size_default">Click to refresh</string>
-    <string name="update_status_default">Click to check updates</string>
     <string name="ftp_server_not_running">FTP server not running</string>
     <string name="cache_calculating">Calculating…</string>
     <string name="cache_calculation_cancelled">Calculation cancelled</string>
@@ -103,10 +100,6 @@
     <string name="environment_resetting">Resetting environment…</string>
     <string name="environment_reset_complete">Environment reset (restart required)</string>
     <string name="environment_reset_failed">Reset failed: %s</string>
-    <string name="checking_updates">Checking for updates…</string>
-    <string name="update_available">Update available: %1$s (current: %2$s)</string>
-    <string name="up_to_date">Up to date (%s)</string>
-    <string name="update_check_failed">Check failed: %s</string>
     <string name="ftp_server_starting">Starting FTP server…</string>
     <string name="ftp_server_start_failed_env">Start failed (ensure Ubuntu environment is initialized)</string>
     <string name="ftp_server_start_failed">Start failed: %s</string>
@@ -131,8 +124,6 @@
     
     <!-- Additional new strings -->
     <string name="initializing">Initializing...</string>
-    <string name="new_version_found">New version found: %1$s</string>
-    <string name="update_check_failed_short">Update check failed</string>
     <string name="cannot_open_browser">Cannot open browser</string>
     <string name="ftp_server_running_info">FTP Server Running\nAddress: %1$s:%2$s\nUsername: %3$s\nPassword: %4$s\nRoot Directory: Ubuntu File System</string>
     <string name="unknown_session">Unknown Session</string>

@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ai.assistance.operit.terminal.utils.CacheManager
-import com.ai.assistance.operit.terminal.utils.UpdateChecker
 import com.ai.assistance.operit.terminal.utils.FtpServerManager
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.data.MirrorSource
@@ -27,7 +26,6 @@ class SettingsViewModel(
 ) : AndroidViewModel(application) {
     private val cacheManager = CacheManager(application)
     private val terminalManagerRef by lazy { terminalManager ?: TerminalManager.getInstance(application) }
-    private val updateChecker = UpdateChecker(application)
     private val ftpServerManager = FtpServerManager.getInstance(application)
     private val sourceManager = SourceManager(application)
     private val sshConfigManager = SSHConfigManager(application)
@@ -42,9 +40,6 @@ class SettingsViewModel(
     private val _cacheSize = MutableStateFlow(application.getString(com.ai.assistance.operit.terminal.R.string.cache_size_default))
     val cacheSize = _cacheSize.asStateFlow()
 
-    private val _updateStatus = MutableStateFlow(application.getString(com.ai.assistance.operit.terminal.R.string.update_status_default))
-    val updateStatus = _updateStatus.asStateFlow()
-    
     private val _isCalculatingCache = MutableStateFlow(false)
     val isCalculatingCache = _isCalculatingCache.asStateFlow()
     
@@ -61,10 +56,6 @@ class SettingsViewModel(
     private val _isManagingFtpServer = MutableStateFlow(false)
     val isManagingFtpServer = _isManagingFtpServer.asStateFlow()
 
-    // 更新相关状态
-    private val _hasUpdateAvailable = MutableStateFlow(false)
-    val hasUpdateAvailable = _hasUpdateAvailable.asStateFlow()
-    
     // 源管理相关状态
     private val _sourceConfigs = MutableStateFlow<Map<PackageManagerType, SourceConfig>>(emptyMap())
     val sourceConfigs = _sourceConfigs.asStateFlow()
@@ -108,7 +99,6 @@ class SettingsViewModel(
 
     // 自动检测更新，但不自动计算缓存大小
     init {
-        checkForUpdates()
         updateFtpServerStatus()
         loadSourceConfigs()
         loadSSHConfigs()
@@ -282,34 +272,6 @@ class SettingsViewModel(
         }
     }
 
-    fun checkForUpdates() {
-        viewModelScope.launch {
-            _updateStatus.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.checking_updates)
-            when (val result = updateChecker.checkForUpdates(showToast = true)) {
-                is UpdateChecker.UpdateResult.UpdateAvailable -> {
-                    _updateStatus.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.update_available, result.latestVersion, result.currentVersion)
-                    _hasUpdateAvailable.value = true
-                }
-                is UpdateChecker.UpdateResult.UpToDate -> {
-                    _updateStatus.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.up_to_date, result.currentVersion)
-                    _hasUpdateAvailable.value = false
-                }
-                is UpdateChecker.UpdateResult.Error -> {
-                    _updateStatus.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.update_check_failed, result.message)
-                    _hasUpdateAvailable.value = false
-                }
-            }
-        }
-    }
-    
-    fun openGitHubRepo() {
-        updateChecker.openGitHubRepo()
-    }
-    
-    fun openGitHubReleases() {
-        updateChecker.openGitHubReleases()
-    }
-    
     fun startFtpServer() {
         viewModelScope.launch {
             _isManagingFtpServer.value = true

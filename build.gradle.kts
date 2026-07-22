@@ -11,11 +11,11 @@ plugins {
 android {
     namespace = "com.ai.assistance.operit.terminal"
     compileSdk = 36
+    ndkVersion = providers.gradleProperty("kiyori.android.ndkVersion").get()
 
     defaultConfig {
         minSdk = 26
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        consumerProguardFiles("consumer-rules.pro")
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

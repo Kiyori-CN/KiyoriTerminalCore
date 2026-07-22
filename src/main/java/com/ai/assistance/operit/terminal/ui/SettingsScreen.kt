@@ -4,7 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
@@ -126,7 +126,7 @@ fun SettingsScreen(
                 title = { Text(context.getString(com.ai.assistance.operit.terminal.R.string.settings_title), color = SettingsTheme.onSurfaceColor) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = context.getString(com.ai.assistance.operit.terminal.R.string.back), tint = SettingsTheme.onSurfaceColor)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = context.getString(com.ai.assistance.operit.terminal.R.string.back), tint = SettingsTheme.onSurfaceColor)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

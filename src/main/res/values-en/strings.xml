@@ -124,7 +124,6 @@
     
     <!-- Additional new strings -->
     <string name="initializing">Initializing...</string>
-    <string name="cannot_open_browser">Cannot open browser</string>
     <string name="ftp_server_running_info">FTP Server Running\nAddress: %1$s:%2$s\nUsername: %3$s\nPassword: %4$s\nRoot Directory: Ubuntu File System</string>
     <string name="unknown_session">Unknown Session</string>
     

@@ -124,7 +124,6 @@
     
     <!-- Additional new strings -->
     <string name="initializing">正在初始化...</string>
-    <string name="cannot_open_browser">无法打开浏览器</string>
     <string name="ftp_server_running_info">FTP服务器正在运行\n地址: %1$s:%2$s\n用户名: %3$s\n密码: %4$s\n根目录: Ubuntu文件系统</string>
     <string name="unknown_session">未知会话</string>
     

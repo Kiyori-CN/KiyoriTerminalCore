@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ai.assistance.operit.terminal.data.PackageManagerType
 import com.ai.assistance.operit.terminal.data.SourceConfig
@@ -322,7 +323,7 @@ fun SettingsScreen(
                                 context.startActivity(
                                     android.content.Intent(
                                         android.content.Intent.ACTION_VIEW,
-                                        android.net.Uri.parse("https://github.com/Kiyori-CN/Kiyori")
+                                        "https://github.com/Kiyori-CN/Kiyori".toUri()
                                     ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                                 )
                             },

@@ -2,7 +2,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.parcelize)
     alias(libs.plugins.kotlin.serialization)
@@ -30,7 +29,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            jniLibs.srcDirs("src/main/jniLibs")
+            jniLibs.directories += "src/main/jniLibs"
         }
     }
 
@@ -97,6 +96,7 @@ dependencies {
     
     // Kotlin Serialization
     implementation(libs.kotlinx.serialization)
+    implementation(libs.kotlin.parcelize.runtime)
     
     // SSH 依赖
     implementation("com.jcraft:jsch:0.1.55")

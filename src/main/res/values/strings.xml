@@ -9,7 +9,7 @@
     <string name="expand">展开</string>
     <string name="collapse">收起</string>
     <string name="installed">已安装</string>
-    <string name="operit_required">Operit 必须</string>
+    <string name="operit_required">Kiyori 必须</string>
     
     <!-- Dialog -->
     <string name="setup_dialog_title">温馨提示</string>

@@ -88,8 +88,8 @@ class UbuntuDocumentsProvider : DocumentsProvider() {
             DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD
         )
         row.add(DocumentsContract.Root.COLUMN_ICON, android.R.drawable.ic_menu_view)
-        row.add(DocumentsContract.Root.COLUMN_TITLE, "Operit Ubuntu")
-        row.add(DocumentsContract.Root.COLUMN_SUMMARY, "Access Operit Ubuntu terminal files")
+        row.add(DocumentsContract.Root.COLUMN_TITLE, "Kiyori Ubuntu")
+        row.add(DocumentsContract.Root.COLUMN_SUMMARY, "Access Kiyori Ubuntu terminal files")
         row.add(DocumentsContract.Root.COLUMN_DOCUMENT_ID, getDocIdForFile(ubuntuRoot))
         row.add(DocumentsContract.Root.COLUMN_AVAILABLE_BYTES, ubuntuRoot.freeSpace)
         

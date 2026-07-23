@@ -1083,7 +1083,7 @@ EOF
         configure_sources(){
           # 配置APT源
           cat <<'EOF' > ${'$'}UBUNTU_PATH/etc/apt/sources.list
-        # From Operit Settings - ${aptSource.name}
+        # From Kiyori Settings - ${aptSource.name}
         deb ${aptSource.url} noble main restricted universe multiverse
         deb ${aptSource.url} noble-updates main restricted universe multiverse
         deb ${aptSource.url} noble-backports main restricted universe multiverse

@@ -9,7 +9,7 @@
     <string name="expand">Expand</string>
     <string name="collapse">Collapse</string>
     <string name="installed">Installed</string>
-    <string name="operit_required">Operit Required</string>
+    <string name="operit_required">Kiyori Required</string>
     
     <!-- Dialog -->
     <string name="setup_dialog_title">Notice</string>

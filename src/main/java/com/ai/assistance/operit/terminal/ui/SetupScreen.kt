@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ai.assistance.operit.terminal.TerminalEnvironmentContract
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.data.PackageManagerType
 import com.ai.assistance.operit.terminal.utils.SourceManager
@@ -429,14 +430,11 @@ fun SetupScreen(
                     
                     // 安装 NPM 包（如果 nodejs 已经安装或被选中）
                     if (selectedNpmPackages.isNotEmpty()) {
-                        // 更换为淘宝源
-                        commands.add("npm config set registry https://registry.npmmirror.com/")
-                        // 清理 npm 缓存
-                        commands.add("npm cache clean --force")
-                        // 安装pnpm
-                        commands.add("npm install -g pnpm")
-                        // 使用 pnpm 安装其他包
-                        commands.add("pnpm add -g ${selectedNpmPackages.joinToString(" ")}")
+                        commands.addAll(
+                            TerminalEnvironmentContract.buildNodePackageSetupCommands(
+                                selectedNpmPackages
+                            )
+                        )
                     }
                     
                     commandsToRun.value = commands
@@ -643,7 +641,7 @@ private suspend fun checkPackageInstalled(
         "rust" -> "command -v rustc"
         "uv" -> "command -v uv"
         "nodejs" -> "node -v 2>/dev/null"
-        "pnpm" -> "test -f \"\$(npm prefix -g)/bin/pnpm\" && echo FOUND_PNPM"
+        "pnpm" -> TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
         "go" -> "command -v go"
         "ssh" -> "command -v ssh"
         "sshpass" -> "command -v sshpass"
@@ -664,7 +662,7 @@ private suspend fun checkPackageInstalled(
             majorVersion >= 24
         }
         "rust", "uv", "go", "ssh", "sshpass", "openssh-server", "gradle" -> output.isNotBlank() && !output.contains("not found")
-        "pnpm" -> output.contains("FOUND_PNPM")
+        "pnpm" -> TerminalEnvironmentContract.isNodeToolchainReady(output)
         else -> output.contains("Status: install ok installed")
     }
 }
@@ -705,4 +703,4 @@ private suspend fun executeCommandAndGetOutput(
     
     job.cancel()
     return result
-} 
+}

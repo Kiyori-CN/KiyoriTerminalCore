@@ -1,0 +1,43 @@
+package com.ai.assistance.operit.terminal
+
+import com.ai.assistance.operit.terminal.view.domain.KIYORI_WELCOME_MESSAGE
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class TerminalEnvironmentContractTest {
+    @Test
+    fun nodeSetupUsesTheSharedNpmGlobalBin() {
+        val commands = TerminalEnvironmentContract.buildNodePackageSetupCommands(
+            packages = listOf("typescript")
+        )
+
+        assertEquals(3, commands.size)
+        assertEquals("npm install -g pnpm typescript", commands[2])
+        assertTrue(commands.none { command -> command.startsWith("pnpm add -g") })
+        assertTrue(commands.none { command -> command.contains(".bashrc") })
+    }
+
+    @Test
+    fun nodeToolchainRequiresAnExactCompletionMarker() {
+        val commandEcho = TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
+
+        assertTrue(commandEcho.contains(">= 24"))
+        assertFalse(TerminalEnvironmentContract.isNodeToolchainReady(commandEcho))
+        assertTrue(
+            TerminalEnvironmentContract.isNodeToolchainReady(
+                "${TerminalEnvironmentContract.NODE_TOOLCHAIN_READY_MARKER}\r\n"
+            )
+        )
+    }
+
+    @Test
+    fun welcomeMessageUsesCompactKiyoriBranding() {
+        val visibleLines = KIYORI_WELCOME_MESSAGE.lineSequence().filter { it.isNotEmpty() }.toList()
+
+        assertTrue(KIYORI_WELCOME_MESSAGE.contains("Kiyori Ubuntu environment on Android"))
+        assertFalse(KIYORI_WELCOME_MESSAGE.contains("Your portable Ubuntu environment"))
+        assertTrue(visibleLines.all { line -> line.length <= 48 })
+    }
+}

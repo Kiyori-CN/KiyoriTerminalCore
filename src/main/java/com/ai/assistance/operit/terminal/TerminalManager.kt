@@ -1153,7 +1153,7 @@ EOF
 
           # 使用 proot 直接进入解压的 Ubuntu 根文件系统。
           # - 清理并设置 PATH，避免继承宿主 PATH 造成命令找不到或混用 busybox。
-          # - 绑定常见伪文件系统、外部存储与 Operit 应用沙箱，保障交互和软件包管理工作正常。
+          # - 绑定常见伪文件系统、外部存储与当前宿主应用沙箱，保障交互和软件包管理工作正常。
           # 在 proot 环境中创建必要的目录
           mkdir -p "${'$'}UBUNTU_PATH/storage/emulated" 2>/dev/null
           mkdir -p "${'$'}UBUNTU_PATH$operitUserDataMountPath" 2>/dev/null

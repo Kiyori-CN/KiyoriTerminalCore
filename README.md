@@ -32,3 +32,7 @@ The `terminal-core` module is responsible for the following core tasks:
 Kiyori integrates this repository as the `terminal` Git submodule and pins an exact commit for reproducible builds. A client can bind to `TerminalService` for background operation and IPC, or access the `TerminalManager` singleton directly when running in the same process.
 
 Repository branding does not rename the inherited `com.ai.assistance.operit.terminal` namespace or AIDL contracts. Those identifiers remain compatibility boundaries; see [CONTEXT.md](CONTEXT.md).
+
+## Ubuntu environment
+
+The embedded Ubuntu rootfs keeps the Ubuntu distribution identity and existing internal paths. Kiyori owns the surrounding terminal presentation and the first-run toolchain flow. Node.js setup installs `pnpm` and global TypeScript through npm's global bin; the environment is considered ready only when `node`, `pnpm`, and `tsc` are executable.

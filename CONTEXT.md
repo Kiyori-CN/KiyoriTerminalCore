@@ -21,3 +21,10 @@ This file defines stable repository terminology and compatibility boundaries. Ta
 The namespace `com.ai.assistance.operit.terminal`, AIDL names, persisted paths, and externally consumed identifiers are compatibility identifiers inherited from the upstream implementation. They are not renamed by repository branding work. Changing one requires a separate compatibility and migration design.
 
 KiyoriTerminalCore does not poll an independent upstream application-update channel. New versions are delivered by advancing the pinned submodule commit in `Kiyori-CN/Kiyori`.
+
+## User-visible environment
+
+- The terminal welcome banner and terminal-owned explanatory text use the Kiyori brand.
+- Ubuntu remains the actual distribution identity; its rootfs archive, `os-release`, `issue`, hostname, standard shell files, and package metadata are not rewritten as Kiyori.
+- Node.js setup installs `pnpm` and global TypeScript through npm's existing global bin. The shared readiness contract requires `node`, `pnpm`, and `tsc` to execute successfully in both visible and hidden sessions.
+- `installed-rootfs/ubuntu`, `.operit_installed_ok`, `OPERIT_*`, native filenames, hidden command markers, and chroot paths remain compatibility identifiers.

@@ -8,6 +8,16 @@ import com.ai.assistance.operit.terminal.data.SessionInitState
 import com.ai.assistance.operit.terminal.data.TerminalSessionData
 import com.ai.assistance.operit.terminal.view.domain.ansi.AnsiUtils
 
+internal const val KIYORI_WELCOME_MESSAGE =
+    "  _  __ ___ __   __ ___  ____  ___\r\n" +
+        " | |/ /|_ _|\\ \\ / // _ \\|  _ \\|_ _|\r\n" +
+        " | ' /  | |  \\ V /| | | | |_) || |\r\n" +
+        " | . \\  | |   | | | |_| |  _ < | |\r\n" +
+        " |_|\\_\\|___|  |_|  \\___/|_| \\_\\___|\r\n" +
+        "\r\n" +
+        "  >> Kiyori Ubuntu environment on Android <<\r\n" +
+        "\r\n"
+
 /**
  * 终端输出的会话处理状态
  * @property justHandledCarriageReturn 如果最近处理的行分隔符是回车符（CR），则为 true
@@ -706,16 +716,7 @@ class OutputProcessor(
         // \u001B[2J - 清屏（清除初始化过程中的所有输出）
         // \u001B[H - 移动光标到左上角
         // 使用 \r\n 确保正确换行（\r 回车到行首，\n 换到下一行）
-        val welcomeMessage = "\u001B[2J\u001B[H" +
-            "  ___                   _ _   \r\n" +
-            " / _ \\ _ __   ___ _ __ (_) |_ \r\n" +
-            "| | | | '_ \\ / _ \\ '__ | | __|\r\n" +
-            "| |_| | |_) |  __/ |   | | |_ \r\n" +
-            " \\___/| .__/ \\___|_|   |_|\\__|\r\n" +
-            "      |_|                    \r\n" +
-            "\r\n" +
-            "  >> Your portable Ubuntu environment on Android <<\r\n" +
-            "\r\n"
+        val welcomeMessage = "\u001B[2J\u001B[H$KIYORI_WELCOME_MESSAGE"
         
         // 直接发送到 ANSI 解析器（Canvas 渲染）
         // 清屏操作会清除之前初始化过程中的所有输出

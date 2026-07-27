@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ai.assistance.operit.terminal.CommandExecutionEvent
 import com.ai.assistance.operit.terminal.TerminalEnvironmentContract
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.data.PackageManagerType
@@ -675,7 +676,6 @@ private suspend fun executeCommandAndGetOutput(
     scope: CoroutineScope
 ): String? {
     val deferred = CompletableDeferred<String>()
-    val output = StringBuilder()
     val commandId = UUID.randomUUID().toString()
     val collectorReady = CompletableDeferred<Unit>()
 
@@ -684,11 +684,12 @@ private suspend fun executeCommandAndGetOutput(
             .filter { it.sessionId == sessionId && it.commandId == commandId }
             .onStart { collectorReady.complete(Unit) }
             .collect { event ->
-                output.append(event.outputChunk)
-                if (event.isCompleted) {
-                    if (!deferred.isCompleted) {
-                        deferred.complete(output.toString())
-                    }
+                // The completion event already contains the authoritative full command output.
+                // Appending it to progress chunks duplicates exact readiness markers and makes
+                // marker-based checks report an installed package as missing.
+                val completedOutput = completedCommandOutput(event)
+                if (completedOutput != null && !deferred.isCompleted) {
+                    deferred.complete(completedOutput)
                 }
             }
     }
@@ -704,3 +705,6 @@ private suspend fun executeCommandAndGetOutput(
     job.cancel()
     return result
 }
+
+internal fun completedCommandOutput(event: CommandExecutionEvent): String? =
+    if (event.isCompleted) event.outputChunk else null

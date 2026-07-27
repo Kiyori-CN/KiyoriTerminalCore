@@ -1,8 +1,10 @@
 package com.ai.assistance.operit.terminal
 
 import com.ai.assistance.operit.terminal.view.domain.KIYORI_WELCOME_MESSAGE
+import com.ai.assistance.operit.terminal.ui.completedCommandOutput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -33,6 +35,35 @@ class TerminalEnvironmentContractTest {
         assertTrue(
             TerminalEnvironmentContract.isNodeToolchainReady(
                 "${TerminalEnvironmentContract.NODE_TOOLCHAIN_READY_MARKER}\r\n"
+            )
+        )
+    }
+
+    @Test
+    fun setupDetectionUsesOnlyTheAuthoritativeCompletionOutput() {
+        val commandId = "environment-check"
+        val sessionId = "terminal-session"
+        val marker = TerminalEnvironmentContract.NODE_TOOLCHAIN_READY_MARKER
+
+        assertNull(
+            completedCommandOutput(
+                CommandExecutionEvent(
+                    commandId = commandId,
+                    sessionId = sessionId,
+                    outputChunk = marker,
+                    isCompleted = false,
+                )
+            )
+        )
+        assertEquals(
+            marker,
+            completedCommandOutput(
+                CommandExecutionEvent(
+                    commandId = commandId,
+                    sessionId = sessionId,
+                    outputChunk = marker,
+                    isCompleted = true,
+                )
             )
         )
     }

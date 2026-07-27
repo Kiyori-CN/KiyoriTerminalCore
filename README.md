@@ -35,4 +35,4 @@ Repository branding does not rename the inherited `com.ai.assistance.operit.term
 
 ## Ubuntu environment
 
-The embedded Ubuntu rootfs keeps the Ubuntu distribution identity and existing internal paths. Kiyori owns the surrounding terminal presentation and the first-run toolchain flow. Node.js setup installs `pnpm` and global TypeScript through npm's global bin; the environment is considered ready only when `node`, `pnpm`, and `tsc` are executable.
+The embedded Ubuntu rootfs keeps the Ubuntu distribution identity and existing internal paths. Kiyori owns the surrounding terminal presentation and the first-run toolchain flow. Node.js setup installs `pnpm` and global TypeScript through npm's global bin; readiness resolves `npm prefix -g` and invokes both installed CLIs from that exact bin before reporting the environment ready.

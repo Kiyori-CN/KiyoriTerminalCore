@@ -24,6 +24,11 @@ class TerminalEnvironmentContractTest {
         val commandEcho = TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
 
         assertTrue(commandEcho.contains(">= 24"))
+        assertTrue(commandEcho.contains("global_bin=\"\$(npm prefix -g)/bin\""))
+        assertTrue(commandEcho.contains("\"\$global_bin/pnpm\" --version"))
+        assertTrue(commandEcho.contains("\"\$global_bin/tsc\" --version"))
+        assertFalse(commandEcho.contains("&& pnpm --version"))
+        assertFalse(commandEcho.contains("&& tsc --version"))
         assertFalse(TerminalEnvironmentContract.isNodeToolchainReady(commandEcho))
         assertTrue(
             TerminalEnvironmentContract.isNodeToolchainReady(

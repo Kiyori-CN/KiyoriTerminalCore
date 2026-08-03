@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.ai.assistance.operit.terminal.data.SSHAuthType
 import com.ai.assistance.operit.terminal.data.SSHConfig
+import com.ai.assistance.operit.terminal.data.generateLocalSshPassword
 import com.ai.assistance.operit.terminal.provider.filesystem.SSHFileSystemProvider
 import com.ai.assistance.operit.terminal.provider.type.HiddenExecResult
 import com.jcraft.jsch.JSch
@@ -94,7 +95,7 @@ class SSHFileConnectionManager private constructor(private val context: Context)
         val remoteTunnelPort: Int = 2222,
         val localSshPort: Int = 2222,
         val localSshUsername: String = "ubuntu",
-        val localSshPassword: String = "ubuntu"
+        val localSshPassword: String = generateLocalSshPassword()
     ) {
         /**
          * 转换为SSHConfig
@@ -485,36 +486,47 @@ class SSHFileConnectionManager private constructor(private val context: Context)
                     
                     # 挂载 ~/storage
                     if ! mountpoint -q ~/storage 2>/dev/null; then
-                        sshfs -p ${config.remoteTunnelPort} \
+                        sshpass -e sshfs -p ${config.remoteTunnelPort} \
                             ${config.localSshUsername}@localhost:/ \
                             ~/storage \
-                            -o password_stdin \
-                            -o StrictHostKeyChecking=no \
-                            -o UserKnownHostsFile=/dev/null \
+                            -o StrictHostKeyChecking=accept-new \
                             -o reconnect \
                             -o ServerAliveInterval=15 \
-                            -o ServerAliveCountMax=3 <<< "${config.localSshPassword}"
+                            -o ServerAliveCountMax=3
                         echo "MOUNT_SUCCESS:~/storage"
                     fi
                     
                     # 挂载 ~/sdcard
                     if ! mountpoint -q ~/sdcard 2>/dev/null; then
-                        sshfs -p ${config.remoteTunnelPort} \
+                        sshpass -e sshfs -p ${config.remoteTunnelPort} \
                             ${config.localSshUsername}@localhost:/ \
                             ~/sdcard \
-                            -o password_stdin \
-                            -o StrictHostKeyChecking=no \
-                            -o UserKnownHostsFile=/dev/null \
+                            -o StrictHostKeyChecking=accept-new \
                             -o reconnect \
                             -o ServerAliveInterval=15 \
-                            -o ServerAliveCountMax=3 <<< "${config.localSshPassword}"
+                            -o ServerAliveCountMax=3
                         echo "MOUNT_SUCCESS:~/sdcard"
                     fi
                 """.trimIndent()
                 
                 val channel = connection.session.openChannel("exec") as com.jcraft.jsch.ChannelExec
-                channel.setCommand(mountCommands)
+                channel.setCommand(
+                    """
+                    IFS= read -r SSHPASS
+                    export SSHPASS
+                    $mountCommands
+                    """.trimIndent()
+                )
                 channel.connect()
+
+                // OpenSSH servers commonly reject arbitrary SSH "env" channel requests unless
+                // AcceptEnv explicitly allows them. Send the generated local password over the
+                // channel's stdin so it never enters the command text, process arguments, or logs.
+                channel.outputStream.use { remoteInput ->
+                    remoteInput.write(config.localSshPassword.toByteArray(Charsets.UTF_8))
+                    remoteInput.write('\n'.code)
+                    remoteInput.flush()
+                }
                 
                 val output = channel.inputStream.bufferedReader().readText()
                 val errorOutput = channel.errStream.bufferedReader().readText()

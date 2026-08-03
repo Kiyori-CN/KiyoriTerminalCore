@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ai.assistance.operit.terminal.data.SSHAuthType
 import com.ai.assistance.operit.terminal.data.SSHConfig
+import com.ai.assistance.operit.terminal.data.generateLocalSshPassword
 
 /**
  * SSH 配置界面（单一配置）
@@ -229,7 +230,9 @@ fun SSHConfigEditDialog(
     var remoteTunnelPort by remember { mutableStateOf(config?.remoteTunnelPort?.toString() ?: "8881") }
     var localSshPort by remember { mutableStateOf(config?.localSshPort?.toString() ?: "2223") }
     var localSshUsername by remember { mutableStateOf(config?.localSshUsername ?: "android") }
-    var localSshPassword by remember { mutableStateOf(config?.localSshPassword ?: "3688368398") }
+    var localSshPassword by remember {
+        mutableStateOf(config?.localSshPassword ?: generateLocalSshPassword())
+    }
     
     // 心跳包配置
     var enableKeepAlive by remember { mutableStateOf(config?.enableKeepAlive ?: true) }

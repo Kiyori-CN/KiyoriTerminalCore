@@ -16,6 +16,7 @@ import org.apache.ftpserver.usermanager.impl.WritePermission
 import org.apache.ftpserver.DataConnectionConfigurationFactory
 import java.io.File
 import java.net.NetworkInterface
+import java.security.SecureRandom
 import java.util.*
 
 class FtpServerManager private constructor(private val context: Context) {
@@ -24,7 +25,9 @@ class FtpServerManager private constructor(private val context: Context) {
         private const val TAG = "FtpServerManager"
         private const val FTP_PORT = 2127
         private const val FTP_USERNAME = "ubuntu"
-        private const val FTP_PASSWORD = "ubuntu123"
+        private const val FTP_PASSWORD_LENGTH = 20
+        private const val FTP_PASSWORD_ALPHABET =
+            "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         
         @Volatile
         private var instance: FtpServerManager? = null
@@ -37,6 +40,7 @@ class FtpServerManager private constructor(private val context: Context) {
     }
     
     private var ftpServer: FtpServer? = null
+    private var activePassword: String? = null
     private val filesDir = context.filesDir
     private val usrDir = File(filesDir, "usr")
     
@@ -61,6 +65,7 @@ class FtpServerManager private constructor(private val context: Context) {
                 return@withContext false
             }
             
+            val password = generatePassword()
             val serverFactory = FtpServerFactory()
             val listenerFactory = ListenerFactory()
             
@@ -83,7 +88,7 @@ class FtpServerManager private constructor(private val context: Context) {
             // 创建用户
             val user = BaseUser().apply {
                 name = FTP_USERNAME
-                password = FTP_PASSWORD
+                this.password = password
                 homeDirectory = ubuntuRootPath
                 authorities = listOf<Authority>(WritePermission())
             }
@@ -94,11 +99,11 @@ class FtpServerManager private constructor(private val context: Context) {
             // 创建并启动FTP服务器
             ftpServer = serverFactory.createServer()
             ftpServer?.start()
+            activePassword = password
             
             Log.i(TAG, "FTP服务器已启动")
             Log.i(TAG, "服务器地址: ${getLocalIpAddress()}:$FTP_PORT")
             Log.i(TAG, "用户名: $FTP_USERNAME")
-            Log.i(TAG, "密码: $FTP_PASSWORD")
             Log.i(TAG, "根目录: $ubuntuRootPath")
             
             true
@@ -112,6 +117,7 @@ class FtpServerManager private constructor(private val context: Context) {
         try {
             ftpServer?.stop()
             ftpServer = null
+            activePassword = null
             Log.i(TAG, "FTP服务器已停止")
             true
         } catch (e: Exception) {
@@ -125,13 +131,14 @@ class FtpServerManager private constructor(private val context: Context) {
     }
     
     fun getFtpServerInfo(): String {
-        return if (isFtpServerRunning()) {
+        val password = activePassword
+        return if (isFtpServerRunning() && password != null) {
             context.getString(
                 com.ai.assistance.operit.terminal.R.string.ftp_server_running_info,
                 getLocalIpAddress(),
                 FTP_PORT.toString(),
                 FTP_USERNAME,
-                FTP_PASSWORD
+                password
             )
         } else {
             context.getString(com.ai.assistance.operit.terminal.R.string.ftp_server_not_running)
@@ -141,4 +148,13 @@ class FtpServerManager private constructor(private val context: Context) {
     private fun getLocalIpAddress(): String {
         return "127.0.0.1"
     }
-} 
+
+    private fun generatePassword(): String {
+        val random = SecureRandom()
+        return buildString(FTP_PASSWORD_LENGTH) {
+            repeat(FTP_PASSWORD_LENGTH) {
+                append(FTP_PASSWORD_ALPHABET[random.nextInt(FTP_PASSWORD_ALPHABET.length)])
+            }
+        }
+    }
+}

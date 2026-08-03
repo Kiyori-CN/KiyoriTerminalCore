@@ -1761,6 +1761,7 @@ class CanvasTerminalView @JvmOverloads constructor(
                 tabTouchY = event.y
                 val releaseTarget = if (withinTabBar) hitTestTabTarget(event.x, event.y) else TabTouchTarget.None
                 if (!tabTouchMoved && isSameTabTarget(activeTabTouchTarget, releaseTarget)) {
+                    performClick()
                     executeTabTouchTarget(activeTabTouchTarget)
                 } else if (tabTouchMoved && (activeTabTouchTarget is TabTouchTarget.Background || activeTabTouchTarget is TabTouchTarget.SelectTab)) {
                     val maxOffset = getMaxTabScrollOffset()
@@ -2264,6 +2265,11 @@ class CanvasTerminalView @JvmOverloads constructor(
     }
     
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> parent?.requestDisallowInterceptTouchEvent(true)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                parent?.requestDisallowInterceptTouchEvent(false)
+        }
         if (handleTabTouch(event)) {
             return true
         }
@@ -2347,6 +2353,7 @@ class CanvasTerminalView @JvmOverloads constructor(
                         !gestureHandler.isScaling &&
                         !hadMultiTouch
                 if (isClickGesture) {
+                    performClick()
                     if (isFullscreenMode) {
                         showSoftKeyboard()
                     } else {
@@ -2375,6 +2382,11 @@ class CanvasTerminalView @JvmOverloads constructor(
         }
         
         return handled || super.onTouchEvent(event)
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
     }
     
     /**

@@ -1,5 +1,20 @@
 package com.ai.assistance.operit.terminal.data
 
+import java.security.SecureRandom
+
+private const val LOCAL_SSH_PASSWORD_LENGTH = 24
+private const val LOCAL_SSH_PASSWORD_ALPHABET =
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+
+fun generateLocalSshPassword(): String {
+    val random = SecureRandom()
+    return buildString(LOCAL_SSH_PASSWORD_LENGTH) {
+        repeat(LOCAL_SSH_PASSWORD_LENGTH) {
+            append(LOCAL_SSH_PASSWORD_ALPHABET[random.nextInt(LOCAL_SSH_PASSWORD_ALPHABET.length)])
+        }
+    }
+}
+
 /**
  * SSH 连接配置（单一配置）
  */
@@ -15,7 +30,7 @@ data class SSHConfig(
     val enableReverseTunnel: Boolean = false,
     val remoteTunnelPort: Int = 8881,
     val localSshPort: Int = 2223,  // 本地SSHD服务器端口
-    val localSshPassword: String = "3688368398",
+    val localSshPassword: String = generateLocalSshPassword(),
     // 本地端口转发配置（用于MCP Bridge）
     val localSshUsername: String = "android",
     val enablePortForwarding: Boolean = true,

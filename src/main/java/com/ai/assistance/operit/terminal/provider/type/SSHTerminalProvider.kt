@@ -121,7 +121,7 @@ class SSHTerminalProvider(
                 val env = buildEnvironment()
                 
                 Log.d(TAG, "Starting local terminal session for SSH with command: ${command.joinToString(" ")}")
-                Log.d(TAG, "Environment: $env")
+                Log.d(TAG, "Environment keys: ${env.keys.sorted()}")
                 
                 val pty = Pty.start(command, env, filesDir)
                 
@@ -210,7 +210,7 @@ class SSHTerminalProvider(
         
         // 如果是密码认证，使用sshpass自动输入密码
         if (sshConfig.authType == SSHAuthType.PASSWORD && sshConfig.password != null) {
-            cmd.append("sshpass -p '${sshConfig.password}' ")
+            cmd.append("sshpass -e ")
         }
         
         cmd.append("ssh")
@@ -225,7 +225,7 @@ class SSHTerminalProvider(
             cmd.append(" -i \"${sshConfig.privateKeyPath}\"")
         }
         
-        cmd.append(" -o StrictHostKeyChecking=no") // 避免首次连接时的主机密钥检查提示
+        cmd.append(" -o StrictHostKeyChecking=accept-new")
         
         // 配置心跳包（Keep-Alive）
         if (sshConfig.enableKeepAlive) {
@@ -248,6 +248,9 @@ class SSHTerminalProvider(
         env["PATH"] = "${binDir.absolutePath}:${System.getenv("PATH")}"
         env["HOME"] = filesDir.absolutePath
         env["PREFIX"] = usrDir.absolutePath
+        if (sshConfig.authType == SSHAuthType.PASSWORD && sshConfig.password != null) {
+            env["SSHPASS"] = sshConfig.password
+        }
         env["TERMUX_PREFIX"] = usrDir.absolutePath
         env["LD_LIBRARY_PATH"] = "${nativeLibDir}:${binDir.absolutePath}"
         env["PROOT_LOADER"] = File(binDir, "loader").absolutePath

@@ -656,12 +656,15 @@ class TerminalManager private constructor(
             Log.e(TAG, "Failed to remove stale libtalloc link", e)
         }
 
+        if (!installSudoShim()) {
+            return
+        }
+
         // Symlink other binaries
         val libraries = mapOf(
             "liboperit_proot.so" to "proot",
             "liboperit_loader.so" to "loader",
-            "libbash.so" to "bash",
-            "libsudo.so" to "sudo"
+            "libbash.so" to "bash"
         )
 
         libraries.forEach { (libName, linkName) ->
@@ -699,6 +702,28 @@ class TerminalManager private constructor(
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to create $linkName link using Java NIO", e)
             }
+        }
+    }
+
+    private fun installSudoShim(): Boolean {
+        val sudoFile = File(binDir, "sudo")
+        return try {
+            Files.deleteIfExists(sudoFile.toPath())
+            sudoFile.writeText(
+                "#!/system/bin/sh\n" +
+                    "exec \"${'$'}@\"\n"
+            )
+            val executable = sudoFile.setExecutable(true, false) && sudoFile.canExecute()
+            if (!executable) {
+                Log.e(TAG, "Failed to mark sudo shim executable: ${sudoFile.absolutePath}")
+                false
+            } else {
+                Log.d(TAG, "Installed sudo command shim at ${sudoFile.absolutePath}")
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to install sudo command shim", e)
+            false
         }
     }
 

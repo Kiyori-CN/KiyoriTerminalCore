@@ -3,8 +3,10 @@ package com.ai.assistance.operit.terminal.utils
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import androidx.core.content.edit
 import com.ai.assistance.operit.terminal.data.SSHAuthType
 import com.ai.assistance.operit.terminal.data.SSHConfig
+import com.ai.assistance.operit.terminal.data.generateLocalSshPassword
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -31,8 +33,6 @@ class SSHConfigManager(context: Context) {
      */
     suspend fun getConfig(): SSHConfig? = withContext(Dispatchers.IO) {
         val configJson = prefs.getString(KEY_CONFIG, null)
-        Log.d(TAG, "getConfig: configJson = $configJson")
-        
         if (configJson == null) {
             Log.d(TAG, "getConfig: No config found")
             return@withContext null
@@ -41,6 +41,10 @@ class SSHConfigManager(context: Context) {
         try {
             val json = JSONObject(configJson)
             val config = parseConfig(json)
+            if (json.optString("localSshPassword") != config.localSshPassword) {
+                prefs.edit { putString(KEY_CONFIG, toJson(config).toString()) }
+                Log.i(TAG, "Rotated insecure or missing local SSH password")
+            }
             Log.d(TAG, "getConfig: Successfully parsed config: ${config.username}@${config.host}")
             config
         } catch (e: Exception) {
@@ -56,14 +60,8 @@ class SSHConfigManager(context: Context) {
         Log.d(TAG, "saveConfig: Saving config for ${config.username}@${config.host}:${config.port}")
         val json = toJson(config)
         val jsonString = json.toString()
-        Log.d(TAG, "saveConfig: JSON = $jsonString")
-        
-        val success = prefs.edit().putString(KEY_CONFIG, jsonString).commit()
-        Log.d(TAG, "saveConfig: Save result = $success")
-        
-        // 验证保存
-        val savedJson = prefs.getString(KEY_CONFIG, null)
-        Log.d(TAG, "saveConfig: Verification read = $savedJson")
+
+        prefs.edit { putString(KEY_CONFIG, jsonString) }
     }
     
     /**
@@ -71,8 +69,7 @@ class SSHConfigManager(context: Context) {
      */
     suspend fun deleteConfig() = withContext(Dispatchers.IO) {
         Log.d(TAG, "deleteConfig: Deleting SSH config")
-        val success = prefs.edit().remove(KEY_CONFIG).commit()
-        Log.d(TAG, "deleteConfig: Delete result = $success")
+        prefs.edit { remove(KEY_CONFIG) }
     }
     
     /**
@@ -94,7 +91,7 @@ class SSHConfigManager(context: Context) {
      */
     fun setEnabled(enabled: Boolean) {
         Log.d(TAG, "setEnabled: $enabled")
-        prefs.edit().putBoolean(KEY_ENABLED, enabled).apply()
+        prefs.edit { putBoolean(KEY_ENABLED, enabled) }
     }
     
     private fun parseConfig(json: JSONObject): SSHConfig {
@@ -111,7 +108,12 @@ class SSHConfigManager(context: Context) {
             remoteTunnelPort = json.optInt("remoteTunnelPort", 8888),
             localSshPort = json.optInt("localSshPort", 8022),
             localSshUsername = json.optString("localSshUsername", "root"),
-            localSshPassword = json.optString("localSshPassword", "")
+            localSshPassword =
+                json.optString("localSshPassword")
+                    .takeUnless {
+                        it.length < 16
+                    }
+                    ?: generateLocalSshPassword()
         )
     }
     

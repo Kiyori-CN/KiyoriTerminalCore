@@ -7,6 +7,7 @@
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <stdio.h>
+#include <limits.h>
 #include <android/log.h>
 #include <termios.h>
 
@@ -19,6 +20,18 @@
 #define TAG "PtyJNI"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
+#define PROCESS_STILL_RUNNING INT_MIN
+#define PROCESS_WAIT_FAILED (INT_MIN + 1)
+
+static jint decode_wait_status(int status) {
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return PROCESS_WAIT_FAILED;
+}
 
 JNIEXPORT jintArray JNICALL
 Java_com_ai_assistance_operit_terminal_Pty_00024Companion_createSubprocess(JNIEnv *env, jobject thiz,
@@ -129,11 +142,32 @@ Java_com_ai_assistance_operit_terminal_Pty_00024Companion_createSubprocess(JNIEn
 JNIEXPORT jint JNICALL
 Java_com_ai_assistance_operit_terminal_Pty_00024Companion_waitFor(JNIEnv *env, jobject thiz, jint pid) {
     int status;
-    waitpid(pid, &status, 0);
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
+    pid_t result;
+    do {
+        result = waitpid(pid, &status, 0);
+    } while (result < 0 && errno == EINTR);
+    if (result < 0) {
+        LOGE("waitpid(%d) failed: %s", pid, strerror(errno));
+        return PROCESS_WAIT_FAILED;
     }
-    return -1;
+    return decode_wait_status(status);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_ai_assistance_operit_terminal_Pty_00024Companion_pollExitStatus(JNIEnv *env, jobject thiz, jint pid) {
+    int status;
+    pid_t result;
+    do {
+        result = waitpid(pid, &status, WNOHANG);
+    } while (result < 0 && errno == EINTR);
+    if (result == 0) {
+        return PROCESS_STILL_RUNNING;
+    }
+    if (result < 0) {
+        LOGE("waitpid(%d, WNOHANG) failed: %s", pid, strerror(errno));
+        return PROCESS_WAIT_FAILED;
+    }
+    return decode_wait_status(status);
 }
 
 /**
@@ -205,4 +239,4 @@ Java_com_ai_assistance_operit_terminal_Pty_setPtyWindowSize(JNIEnv *env, jobject
     
     LOGD("PTY window size set to %dx%d for fd %d", rows, cols, fd);
     return 0;
-} 
+}

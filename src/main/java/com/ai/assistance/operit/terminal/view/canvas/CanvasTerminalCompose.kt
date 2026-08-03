@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.terminal.view.canvas
 
-import android.view.MotionEvent
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
@@ -49,16 +48,6 @@ fun CanvasTerminalScreen(
                     requestFocus()
                 }
                 
-                // 请求父容器不要拦截触摸事件，让终端视图处理滚动和缩放手势
-                setOnTouchListener { v, event ->
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN ->
-                            v.parent?.requestDisallowInterceptTouchEvent(true)
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                            v.parent?.requestDisallowInterceptTouchEvent(false)
-                    }
-                    false // 返回 false 让 View 继续处理事件
-                }
             }
         },
         update = { view ->
@@ -135,16 +124,6 @@ fun PerformanceMonitoredTerminal(
                     onFpsUpdate(fps)
                 }
                 
-                // 请求父容器不要拦截触摸事件，让终端视图处理滚动和缩放手势
-                setOnTouchListener { v, event ->
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN ->
-                            v.parent?.requestDisallowInterceptTouchEvent(true)
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                            v.parent?.requestDisallowInterceptTouchEvent(false)
-                    }
-                    false // 返回 false 让 View 继续处理事件
-                }
             }
         },
         update = { view ->
@@ -196,16 +175,6 @@ fun CanvasTerminalOutput(
                 setSessionScrollCallbacks(sessionId, onScrollOffsetChanged, getScrollOffset)
                 setTabBarState(tabs, currentTabId, onTabClick, onTabClose, onNewTab)
                 
-                // 请求父容器不要拦截触摸事件，让终端视图处理滚动手势
-                setOnTouchListener { v, event ->
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN ->
-                            v.parent?.requestDisallowInterceptTouchEvent(true)
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                            v.parent?.requestDisallowInterceptTouchEvent(false)
-                    }
-                    false // 返回 false 让 View 继续处理事件
-                }
             }
         },
         update = { view ->

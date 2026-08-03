@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.terminal
 
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.File
 import java.io.FileDescriptor
@@ -14,7 +15,8 @@ open class Pty(
     val masterFd: FileDescriptor?,
     private val ptyMaster: Int,
     val stdout: InputStream,
-    val stdin: OutputStream
+    val stdin: OutputStream,
+    private val masterFdOwner: ParcelFileDescriptor? = null
 ) {
     // 为本地终端提供的便利构造函数
     constructor(process: Process, masterFd: FileDescriptor, ptyMaster: Int) : this(
@@ -32,11 +34,21 @@ open class Pty(
     fun destroy() {
         process.destroy()
         try {
-            // It's important to close the master FD to signal EOF to the process
             stdout.close()
+        } catch (e: IOException) {
+            Log.e(TAG, "Error closing PTY output stream", e)
+        }
+        try {
             stdin.close()
         } catch (e: IOException) {
-            Log.e("Pty", "Error closing PTY streams", e)
+            Log.e(TAG, "Error closing PTY input stream", e)
+        }
+        try {
+            // start() adopts the native master FD; retaining and closing its owner makes
+            // descriptor lifetime explicit instead of relying on private-field reflection.
+            masterFdOwner?.close()
+        } catch (e: IOException) {
+            Log.e(TAG, "Error closing PTY master descriptor", e)
         }
     }
 
@@ -65,59 +77,49 @@ open class Pty(
                 throw IOException("Failed to create subprocess with PTY. pid=$pid, fd=$masterFdInt")
             }
 
-            val fileDescriptor = Reflect.getFileDescriptor(masterFdInt)
-            
-            // We need a Process object to manage the subprocess lifetime
-            val dummyProcess = object : Process() {
-                override fun destroy() {
-                    // Send SIGHUP to the process group to ensure all child processes are terminated
-                    try {
-                        android.os.Process.sendSignal(pid, 1) // SIGHUP
-                    } catch (e: Exception) {
-                        // Ignore
-                    }
-                    
-                    // Send SIGKILL to ensure the process is dead immediately
-                    try {
-                        android.os.Process.sendSignal(pid, 9) // SIGKILL
-                    } catch (e: Exception) {
-                        // Ignore
-                    }
+            val descriptorOwner = ParcelFileDescriptor.adoptFd(masterFdInt)
+            var stdoutDescriptor: ParcelFileDescriptor? = null
+            try {
+                // The PTY master is full-duplex. Each stream receives its own duplicate while
+                // descriptorOwner retains the original FD used by ioctl operations.
+                val duplicatedStdout = ParcelFileDescriptor.dup(descriptorOwner.fileDescriptor)
+                stdoutDescriptor = duplicatedStdout
+                val stdinDescriptor = ParcelFileDescriptor.dup(descriptorOwner.fileDescriptor)
+                val process =
+                    PtyProcess(
+                        pid = pid,
+                        waitForStatus = Companion::waitFor,
+                        pollExitStatus = Companion::pollExitStatus,
+                        sendSignal = android.os.Process::sendSignal,
+                    )
+                return Pty(
+                    process = process,
+                    masterFd = descriptorOwner.fileDescriptor,
+                    ptyMaster = masterFdInt,
+                    stdout = ParcelFileDescriptor.AutoCloseInputStream(duplicatedStdout),
+                    stdin = ParcelFileDescriptor.AutoCloseOutputStream(stdinDescriptor),
+                    masterFdOwner = descriptorOwner,
+                )
+            } catch (e: IOException) {
+                try {
+                    stdoutDescriptor?.close()
+                } catch (closeError: IOException) {
+                    e.addSuppressed(closeError)
                 }
-
-                override fun exitValue(): Int {
-                    // We can't get the actual exit value without a blocking waitpid call,
-                    // which we do in waitFor(). The contract of exitValue() is to throw
-                    // an exception if the process is still running.
-                    try {
-                        // sendSignal(pid, 0) checks if the process exists.
-                        // If it doesn't throw, the process is still alive.
-                        android.os.Process.sendSignal(pid, 0)
-                        throw IllegalThreadStateException("Process hasn't exited")
-                    } catch (e: Exception) {
-                        // The process is dead. We don't have the exit code without waiting,
-                        // so we can't fulfill the contract perfectly. Returning 0 is a
-                        // reasonable fallback for a terminated process where the specific
-                        // exit code isn't available.
-                        return 0
-                    }
+                try {
+                    descriptorOwner.close()
+                } catch (closeError: IOException) {
+                    e.addSuppressed(closeError)
                 }
-
-                override fun getErrorStream(): InputStream? = null
-                override fun getInputStream(): InputStream? = null
-                override fun getOutputStream(): OutputStream? = null
-
-                override fun waitFor(): Int {
-                    return Companion.waitFor(pid)
-                }
+                throw IOException("Failed to duplicate PTY master descriptor", e)
             }
-            
-            return Pty(dummyProcess, fileDescriptor, masterFdInt)
         }
 
         private external fun createSubprocess(cmdArray: Array<String>, envArray: Array<String>, workingDir: String): IntArray
 
         private external fun waitFor(pid: Int): Int
+
+        private external fun pollExitStatus(pid: Int): Int
         
         /**
          * 获取终端标志位
@@ -220,18 +222,65 @@ data class PtyMode(
         return false
     }
 }
+internal const val PTY_PROCESS_STILL_RUNNING: Int = Int.MIN_VALUE
+internal const val PTY_PROCESS_WAIT_FAILED: Int = Int.MIN_VALUE + 1
 
-// Reflection helper to create FileDescriptor from an int fd.
-object Reflect {
-    fun getFileDescriptor(fd: Int): FileDescriptor {
-        val fileDescriptor = FileDescriptor()
-        try {
-            val field = FileDescriptor::class.java.getDeclaredField("descriptor")
-            field.isAccessible = true
-            field.set(fileDescriptor, fd)
-        } catch (e: Exception) {
-            throw IOException("Failed to create FileDescriptor from integer fd", e)
-        }
-        return fileDescriptor
+/**
+ * Process contract for a child created by forkpty().
+ *
+ * pollExitStatus() uses waitpid(WNOHANG), so exitValue() can distinguish a running
+ * child from an exited zombie and return the real cached status without blocking.
+ */
+internal class PtyProcess(
+    private val pid: Int,
+    private val waitForStatus: (Int) -> Int,
+    private val pollExitStatus: (Int) -> Int,
+    private val sendSignal: (Int, Int) -> Unit,
+) : Process() {
+    private val exitLock = Any()
+    private var cachedExitCode: Int? = null
+
+    override fun destroy() {
+        sendSignalAndLog(1, "SIGHUP")
+        sendSignalAndLog(9, "SIGKILL")
     }
-} 
+
+    private fun sendSignalAndLog(signal: Int, name: String) {
+        try {
+            sendSignal(pid, signal)
+        } catch (e: Exception) {
+            Log.e("Pty", "Failed to send $name to PTY process $pid", e)
+        }
+    }
+
+    override fun exitValue(): Int =
+        synchronized(exitLock) {
+            cachedExitCode?.let { return@synchronized it }
+            when (val status = pollExitStatus(pid)) {
+                PTY_PROCESS_STILL_RUNNING ->
+                    throw IllegalThreadStateException("PTY process $pid has not exited")
+                PTY_PROCESS_WAIT_FAILED ->
+                    throw IllegalStateException("Unable to read exit status for PTY process $pid")
+                else -> status.also { cachedExitCode = it }
+            }
+        }
+
+    override fun getErrorStream(): InputStream? = null
+
+    override fun getInputStream(): InputStream? = null
+
+    override fun getOutputStream(): OutputStream? = null
+
+    override fun waitFor(): Int =
+        synchronized(exitLock) {
+            cachedExitCode?.let { return@synchronized it }
+            val status = waitForStatus(pid)
+            check(status != PTY_PROCESS_WAIT_FAILED) {
+                "Unable to wait for PTY process $pid"
+            }
+            check(status != PTY_PROCESS_STILL_RUNNING) {
+                "Blocking wait unexpectedly reported PTY process $pid as running"
+            }
+            status.also { cachedExitCode = it }
+        }
+}

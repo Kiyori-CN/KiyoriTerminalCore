@@ -9,6 +9,7 @@ package com.ai.assistance.operit.terminal.view.canvas
  import android.os.Looper
  import android.util.AttributeSet
  import android.util.Log
+ import android.util.TypedValue
  import android.view.ActionMode
  import android.view.KeyEvent
  import android.view.Menu
@@ -30,6 +31,7 @@ import android.view.accessibility.AccessibilityManager
  import com.ai.assistance.operit.terminal.view.domain.ansi.TerminalChar
  import java.io.File
  import java.util.concurrent.locks.ReentrantLock
+ import kotlin.concurrent.withLock
  import kotlin.math.abs
  import kotlin.math.max
  import kotlin.math.min
@@ -48,7 +50,8 @@ class CanvasTerminalView @JvmOverloads constructor(
     private var config = RenderConfig()
     
     // 暂停控制
-    private val pauseLock = Object()
+    private val pauseLock = ReentrantLock()
+    private val pauseCondition = pauseLock.newCondition()
     @Volatile
     private var isPaused = false
     
@@ -458,7 +461,12 @@ class CanvasTerminalView @JvmOverloads constructor(
     private val tabBarBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val tabPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val tabTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 12f * resources.displayMetrics.scaledDensity
+        textSize =
+            TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_SP,
+                12f,
+                resources.displayMetrics
+            )
         isAntiAlias = true
     }
     private val tabIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -1181,13 +1189,13 @@ class CanvasTerminalView @JvmOverloads constructor(
         if (w <= 0 || h <= 0) {
             Log.w("CanvasTerminalView", "onSizeChanged: Invalid size, stopping render thread")
             stopRenderThread()
-            synchronized(pauseLock) { isPaused = true }
+            pauseLock.withLock { isPaused = true }
         } else {
             // 如果线程不存在（之前被销毁了），这里不急着启动，交给 surfaceChanged 统一处理
             // 只是确保 pause 状态解除
-            synchronized(pauseLock) { 
+            pauseLock.withLock {
                 isPaused = false
-                pauseLock.notifyAll()
+                pauseCondition.signalAll()
             }
             
             // 尺寸发生变化时，重新计算并同步终端大小到 PTY
@@ -1217,16 +1225,16 @@ class CanvasTerminalView @JvmOverloads constructor(
         if (width <= 0 || height <= 0) {
             Log.d("CanvasTerminalView", "surfaceChanged: Invalid size, stopping render thread")
             stopRenderThread()
-            synchronized(pauseLock) {
+            pauseLock.withLock {
                 isPaused = true
             }
             return
         }
         
         // 恢复状态
-        synchronized(pauseLock) {
+        pauseLock.withLock {
             isPaused = false
-            pauseLock.notifyAll()
+            pauseCondition.signalAll()
         }
         
         // 确保线程运行
@@ -1272,7 +1280,7 @@ class CanvasTerminalView @JvmOverloads constructor(
     fun stopRenderThread() {
         Log.d("CanvasTerminalView", "stopRenderThread: Stopping thread")
         renderThread?.let { thread ->
-            Log.d("CanvasTerminalView", "stopRenderThread: Requesting stop for thread ${thread.id}")
+            Log.d("CanvasTerminalView", "stopRenderThread: Requesting stop for ${thread.name}")
             thread.stopRendering()
             thread.interrupt()
             try {
@@ -1353,9 +1361,9 @@ class CanvasTerminalView @JvmOverloads constructor(
                     
                     // 暂停状态：等待唤醒
                     if (isPaused) {
-                        synchronized(pauseLock) {
+                        pauseLock.withLock {
                             while (isPaused && running) {
-                                pauseLock.wait()
+                                pauseCondition.await()
                             }
                         }
                         lastRenderTime = System.currentTimeMillis() // 重置时间基准
@@ -2236,7 +2244,7 @@ class CanvasTerminalView @JvmOverloads constructor(
                         }
                         
                         // 发送悬停事件
-                        val hoverEvent = android.view.accessibility.AccessibilityEvent.obtain(
+                        val hoverEvent = obtainTerminalAccessibilityEvent(
                             android.view.accessibility.AccessibilityEvent.TYPE_VIEW_HOVER_ENTER
                         )
                         hoverEvent.setSource(this, virtualViewId)
@@ -2548,7 +2556,7 @@ class CanvasTerminalView @JvmOverloads constructor(
      */
     private fun showSoftKeyboard() {
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        imm?.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+        imm?.showSoftInput(this, 0)
     }
     
     /**

@@ -14,6 +14,14 @@ import com.ai.assistance.operit.terminal.view.domain.ansi.AnsiTerminalEmulator
 import com.ai.assistance.operit.terminal.view.domain.ansi.TerminalChar
 import kotlin.math.roundToInt
 
+/**
+ * API 30 才公开 AccessibilityEvent 构造器；项目 minSdk 26 必须继续使用工厂方法。
+ * 将兼容调用收敛在这里，避免业务无障碍逻辑散落废弃 API。
+ */
+@Suppress("DEPRECATION")
+internal fun obtainTerminalAccessibilityEvent(eventType: Int): AccessibilityEvent =
+    AccessibilityEvent.obtain(eventType)
+
 internal data class TerminalTabAccessibilityNode(
     val tabId: String,
     val title: String,
@@ -94,7 +102,7 @@ internal class TerminalAccessibilityDelegate(
         }
 
         private fun createHostNodeInfo(): AccessibilityNodeInfo {
-            val info = AccessibilityNodeInfo.obtain(view)
+            val info = obtainHostNodeInfo()
             view.onInitializeAccessibilityNodeInfo(info)
 
             info.className = CanvasTerminalView::class.java.name
@@ -143,7 +151,7 @@ internal class TerminalAccessibilityDelegate(
                 return null
             }
 
-            val info = AccessibilityNodeInfo.obtain(view, virtualViewId)
+            val info = obtainVirtualNodeInfo(virtualViewId)
             info.setParent(view)
             info.className = "android.widget.TextView"
             info.packageName = view.context.packageName
@@ -158,7 +166,6 @@ internal class TerminalAccessibilityDelegate(
                 )
 
             val bounds = getLineBounds(lineIndex)
-            info.setBoundsInParent(bounds)
             info.setBoundsInScreen(parentToScreenRect(bounds))
 
             info.isVisibleToUser = bounds.top >= 0 && bounds.top < view.height
@@ -166,8 +173,12 @@ internal class TerminalAccessibilityDelegate(
             info.isFocusable = true
             info.isAccessibilityFocused =
                 virtualViewId == currentAccessibilityFocusedVirtualViewId
-            info.addAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-            info.addAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS)
+            info.addAction(
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_ACCESSIBILITY_FOCUS
+            )
+            info.addAction(
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_CLEAR_ACCESSIBILITY_FOCUS
+            )
             return info
         }
 
@@ -179,7 +190,7 @@ internal class TerminalAccessibilityDelegate(
                 tab.title.ifBlank { view.context.getString(R.string.unknown_session) }
             val isCurrent = getCurrentTabId() == tab.id
 
-            return AccessibilityNodeInfo.obtain(view, tabNodeId(tabIndex)).apply {
+            return obtainVirtualNodeInfo(tabNodeId(tabIndex)).apply {
                 setParent(view)
                 className = "android.widget.Button"
                 packageName = view.context.packageName
@@ -192,7 +203,6 @@ internal class TerminalAccessibilityDelegate(
                         },
                         tabTitle
                     )
-                setBoundsInParent(bounds)
                 setBoundsInScreen(parentToScreenRect(bounds))
                 isVisibleToUser = !bounds.isEmpty
                 isEnabled = true
@@ -201,9 +211,13 @@ internal class TerminalAccessibilityDelegate(
                 isSelected = isCurrent
                 isAccessibilityFocused =
                     tabNodeId(tabIndex) == currentAccessibilityFocusedVirtualViewId
-                addAction(AccessibilityNodeInfo.ACTION_CLICK)
-                addAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-                addAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS)
+                addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+                addAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_ACCESSIBILITY_FOCUS
+                )
+                addAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_CLEAR_ACCESSIBILITY_FOCUS
+                )
             }
         }
 
@@ -220,7 +234,7 @@ internal class TerminalAccessibilityDelegate(
             val tabTitle =
                 tab.title.ifBlank { view.context.getString(R.string.unknown_session) }
 
-            return AccessibilityNodeInfo.obtain(view, tabCloseNodeId(tabIndex)).apply {
+            return obtainVirtualNodeInfo(tabCloseNodeId(tabIndex)).apply {
                 setParent(view)
                 className = "android.widget.Button"
                 packageName = view.context.packageName
@@ -229,7 +243,6 @@ internal class TerminalAccessibilityDelegate(
                         R.string.terminal_accessibility_close_session_tab,
                         tabTitle
                     )
-                setBoundsInParent(bounds)
                 setBoundsInScreen(parentToScreenRect(bounds))
                 isVisibleToUser = !bounds.isEmpty
                 isEnabled = true
@@ -237,9 +250,13 @@ internal class TerminalAccessibilityDelegate(
                 isClickable = true
                 isAccessibilityFocused =
                     tabCloseNodeId(tabIndex) == currentAccessibilityFocusedVirtualViewId
-                addAction(AccessibilityNodeInfo.ACTION_CLICK)
-                addAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-                addAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS)
+                addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+                addAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_ACCESSIBILITY_FOCUS
+                )
+                addAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_CLEAR_ACCESSIBILITY_FOCUS
+                )
             }
         }
 
@@ -250,12 +267,11 @@ internal class TerminalAccessibilityDelegate(
                     ?.toRoundedRect()
                     ?: fallbackNewTabBounds()
 
-            return AccessibilityNodeInfo.obtain(view, TAB_NEW_NODE_ID).apply {
+            return obtainVirtualNodeInfo(TAB_NEW_NODE_ID).apply {
                 setParent(view)
                 className = "android.widget.Button"
                 packageName = view.context.packageName
                 contentDescription = view.context.getString(R.string.new_session)
-                setBoundsInParent(bounds)
                 setBoundsInScreen(parentToScreenRect(bounds))
                 isVisibleToUser = !bounds.isEmpty
                 isEnabled = true
@@ -263,9 +279,13 @@ internal class TerminalAccessibilityDelegate(
                 isClickable = true
                 isAccessibilityFocused =
                     TAB_NEW_NODE_ID == currentAccessibilityFocusedVirtualViewId
-                addAction(AccessibilityNodeInfo.ACTION_CLICK)
-                addAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-                addAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS)
+                addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+                addAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_ACCESSIBILITY_FOCUS
+                )
+                addAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_CLEAR_ACCESSIBILITY_FOCUS
+                )
             }
         }
 
@@ -381,7 +401,7 @@ internal class TerminalAccessibilityDelegate(
                 return
             }
 
-            val event = AccessibilityEvent.obtain(eventType)
+            val event = obtainTerminalAccessibilityEvent(eventType)
             event.packageName = view.context.packageName
             event.className =
                 if (
@@ -484,6 +504,20 @@ internal class TerminalAccessibilityDelegate(
         private fun tabCloseNodeId(index: Int): Int = TAB_CLOSE_NODE_ID_BASE + index
 
         private fun lineNodeId(index: Int): Int = LINE_NODE_ID_BASE + index
+
+        /**
+         * API 30 才公开等价构造器；minSdk 26 下工厂仍是唯一无分支实现。
+         */
+        @Suppress("DEPRECATION")
+        private fun obtainHostNodeInfo(): AccessibilityNodeInfo =
+            AccessibilityNodeInfo.obtain(view)
+
+        /**
+         * API 30 才公开带虚拟节点 ID 的构造器；保持 API 26-29 的节点来源契约。
+         */
+        @Suppress("DEPRECATION")
+        private fun obtainVirtualNodeInfo(virtualViewId: Int): AccessibilityNodeInfo =
+            AccessibilityNodeInfo.obtain(view, virtualViewId)
 
         private fun parentToScreenRect(bounds: Rect): Rect {
             val screenBounds = Rect(bounds)

@@ -141,7 +141,7 @@ fun TerminalHome(
             // 模仿全屏模式，在焦点切换后稍微延迟再请求输入法
             delay(100)
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.showSoftInput(rootView, InputMethodManager.SHOW_IMPLICIT)
+            imm?.showSoftInput(rootView, 0)
         }
     }
 

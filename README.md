@@ -26,6 +26,10 @@ The `terminal-core` module is responsible for the following core tasks:
 -   **Architecture**: The module utilizes a reactive architecture, with Kotlin Flows at its core for state management and event propagation.
 -   **Concurrency**: Asynchronous operations are managed using Kotlin Coroutines, ensuring that the main thread is not blocked.
 -   **Communication**: While designed for IPC with AIDL, the `TerminalManager` can also be used directly within the same process for a simpler setup.
+-   **FTP dependency hygiene**: The Gradle module excludes FTPServer's transitive MINA JAR and
+    generates a reproducible replacement with `sanitizeMinaCore`. The task verifies the expected
+    upstream trust-all helper classes, rejects references from retained bytecode, removes stale JAR
+    signatures and module descriptors, and fails if any excluded class remains.
 
 ## Usage
 

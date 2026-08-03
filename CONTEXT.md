@@ -15,6 +15,10 @@ This file defines stable repository terminology and compatibility boundaries. Ta
 - `TerminalService` exposes terminal operations to other processes.
 - `ITerminalService.aidl` and `ITerminalCallback.aidl` define the IPC contract.
 - The module is an Android library. Application branding, release distribution, and update ownership belong to the Kiyori parent project.
+- FTP support excludes FTPServer's transitive MINA artifact and consumes the deterministic
+  `sanitizeMinaCore` output instead. The task removes only the closed, unused
+  `BogusTrustManagerFactory*` trust-all helper family and rejects upstream input or retained-bytecode
+  reference drift before compilation.
 
 ## Compatibility boundary
 

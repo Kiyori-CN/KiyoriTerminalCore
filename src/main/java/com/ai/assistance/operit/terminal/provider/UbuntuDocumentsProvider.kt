@@ -11,6 +11,7 @@ import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
 import android.util.Log
 import android.webkit.MimeTypeMap
+import androidx.core.net.toUri
 import com.ai.assistance.operit.terminal.provider.filesystem.FileSystemProvider
 import com.ai.assistance.operit.terminal.provider.filesystem.LocalFileSystemProvider
 import kotlinx.coroutines.runBlocking
@@ -302,7 +303,7 @@ class UbuntuDocumentsProvider : DocumentsProvider() {
 
         if (id.startsWith("content://")) {
             try {
-                val uri = android.net.Uri.parse(id)
+                val uri = id.toUri()
                 val treeId = DocumentsContract.getTreeDocumentId(uri)
                 if (!treeId.isNullOrBlank()) {
                     id = treeId

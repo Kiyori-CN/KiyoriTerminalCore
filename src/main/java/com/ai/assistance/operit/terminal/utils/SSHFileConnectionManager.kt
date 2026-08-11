@@ -28,7 +28,7 @@ import java.util.concurrent.ConcurrentHashMap
  * 
  * 与TerminalManager解耦，可独立用于文件工具
  */
-class SSHFileConnectionManager private constructor(private val context: Context) {
+class SSHFileConnectionManager private constructor(context: Context) {
     
     companion object {
         private const val TAG = "SSHFileConnManager"

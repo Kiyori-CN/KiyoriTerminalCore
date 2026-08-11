@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.terminal
 
+import android.app.Application
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -45,21 +46,21 @@ import com.ai.assistance.operit.terminal.data.TerminalSessionData
 import com.ai.assistance.operit.terminal.view.domain.ansi.AnsiTerminalEmulator
 
 class TerminalManager private constructor(
-    private val context: Context
+    private val application: Application
 ) {
     internal val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val envInitMutex = Mutex()
     private var isEnvInitialized = false
 
-    private val filesDir: File = context.filesDir
+    private val filesDir: File = application.filesDir
     private val usrDir: File = File(filesDir, "usr")
     private val binDir: File = File(usrDir, "bin")
-    private val nativeLibDir: String = context.applicationInfo.nativeLibraryDir
+    private val nativeLibDir: String = application.applicationInfo.nativeLibraryDir
     private val activeSessions = ConcurrentHashMap<String, TerminalSession>()
     private val closingSessions = ConcurrentHashMap.newKeySet<String>()
     
     // SharedPreferences for reading settings
-    private val prefs = context.getSharedPreferences("terminal_settings", Context.MODE_PRIVATE)
+    private val prefs = application.getSharedPreferences("terminal_settings", Context.MODE_PRIVATE)
 
     // 核心组件
     private val sessionManager = SessionManager(this)
@@ -80,9 +81,9 @@ class TerminalManager private constructor(
             }
         }
     )
-    private val sourceManager = SourceManager(context)
-    private val sshConfigManager = SSHConfigManager(context)
-    private val sshdServerManager = SSHDServerManager.getInstance(context)
+    private val sourceManager = SourceManager(application)
+    private val sshConfigManager = SSHConfigManager(application)
+    private val sshdServerManager = SSHDServerManager.getInstance(application)
     
     // 单例的 TerminalProvider
     private var terminalProvider: TerminalProvider? = null
@@ -112,8 +113,9 @@ class TerminalManager private constructor(
         private var INSTANCE: TerminalManager? = null
 
         fun getInstance(context: Context): TerminalManager {
+            val application = context.applicationContext as Application
             return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: TerminalManager(context.applicationContext).also { INSTANCE = it }
+                INSTANCE ?: TerminalManager(application).also { INSTANCE = it }
             }
         }
 
@@ -506,7 +508,7 @@ class TerminalManager private constructor(
         Log.i(TAG, "Terminal session $sessionId exited with code $exitCode")
         outputProcessor.handleSessionExit(
             sessionId = sessionId,
-            message = context.getString(R.string.terminal_exited_with_code, exitCode),
+            message = application.getString(R.string.terminal_exited_with_code, exitCode),
             sessionManager = sessionManager
         )
     }
@@ -520,10 +522,10 @@ class TerminalManager private constructor(
                 val sshConfig = sshConfigManager.getConfig()
                 val provider = if (sshConfig != null && sshConfigManager.isEnabled()) {
                     Log.d(TAG, "Creating singleton SSH terminal provider")
-                    SSHTerminalProvider(context, sshConfig, this)
+                    SSHTerminalProvider(application, sshConfig, this)
                 } else {
                     Log.d(TAG, "Creating singleton local terminal provider")
-                    LocalTerminalProvider(context)
+                    LocalTerminalProvider(application)
                 }
                 provider.connect().getOrThrow()
                 terminalProvider = provider
@@ -757,7 +759,7 @@ class TerminalManager private constructor(
 
                 if (shouldExtract) {
                     if (assetName.endsWith(".sh")) {
-                        context.assets.open(assetName).use { input ->
+                        application.assets.open(assetName).use { input ->
                             val raw = input.readBytes()
                             val text = raw.toString(Charsets.UTF_8)
                             val normalized =
@@ -768,7 +770,7 @@ class TerminalManager private constructor(
                             assetFile.writeText(normalized, Charsets.UTF_8)
                         }
                     } else {
-                        context.assets.open(assetName).use { input ->
+                        application.assets.open(assetName).use { input ->
                             assetFile.outputStream().use { output ->
                                 input.copyTo(output)
                             }
@@ -793,12 +795,15 @@ class TerminalManager private constructor(
         val usrDir = usrDir.absolutePath
         val prootDistroPath = "$usrDir/var/lib/proot-distro"
         val ubuntuPath = "$prootDistroPath/installed-rootfs/ubuntu"
-        val operitPackage = context.packageName
-        val operitDataDir = context.applicationInfo.dataDir
+        val operitPackage = application.packageName
+        val operitDataDir = application.applicationInfo.dataDir
         val currentEmulatedStoragePath = PRootMountMapping.currentEmulatedStoragePath()
         val currentUserDataRootPath = PRootMountMapping.currentUserDataRootPath()
         val operitUserDataMountPath = "$currentUserDataRootPath/$operitPackage"
-        val operitLegacyDataMountPath = "/data/data/$operitPackage"
+        val operitLegacyDataRootPath = PRootMountMapping.legacyDataRootPath()
+        val operitLegacyDataMountPath = PRootMountMapping.legacyAppDataPath(operitPackage)
+        val localTmpPath = PRootMountMapping.localTmpPath()
+        val guestSdcardPath = PRootMountMapping.guestSdcardPath()
 
         // 获取当前选择的源
         val aptSource = sourceManager.getSelectedSource(PackageManagerType.APT)
@@ -1183,7 +1188,7 @@ EOF
           mkdir -p "${'$'}UBUNTU_PATH/storage/emulated" 2>/dev/null
           mkdir -p "${'$'}UBUNTU_PATH$operitUserDataMountPath" 2>/dev/null
           mkdir -p "${'$'}UBUNTU_PATH$operitLegacyDataMountPath" 2>/dev/null
-          mkdir -p "${'$'}UBUNTU_PATH/data/local/tmp" 2>/dev/null
+          mkdir -p "${'$'}UBUNTU_PATH$localTmpPath" 2>/dev/null
           mkdir -p "${'$'}UBUNTU_PATH$homeDir" 2>/dev/null
 
           if [ "${'$'}USE_CHROOT" = "1" ]; then
@@ -1205,21 +1210,21 @@ EOF
           "${'$'}BIN/busybox" umount "${'$'}UBUNTU_PATH/proc" 2>/dev/null || true
           "${'$'}BIN/busybox" umount "${'$'}UBUNTU_PATH${'$'}HOME_DIR" 2>/dev/null || true
           "${'$'}BIN/busybox" umount "${'$'}UBUNTU_PATH$currentUserDataRootPath" 2>/dev/null || true
-          "${'$'}BIN/busybox" umount "${'$'}UBUNTU_PATH/data/data" 2>/dev/null || true
-          "${'$'}BIN/busybox" umount "${'$'}UBUNTU_PATH/data/local/tmp" 2>/dev/null || true
-          "${'$'}BIN/busybox" umount "${'$'}UBUNTU_PATH/sdcard" 2>/dev/null || true
+          "${'$'}BIN/busybox" umount "${'$'}UBUNTU_PATH$operitLegacyDataRootPath" 2>/dev/null || true
+          "${'$'}BIN/busybox" umount "${'$'}UBUNTU_PATH$localTmpPath" 2>/dev/null || true
+          "${'$'}BIN/busybox" umount "${'$'}UBUNTU_PATH$guestSdcardPath" 2>/dev/null || true
         }
         cleanup_mounts
 
-        "${'$'}BIN/busybox" mkdir -p "${'$'}UBUNTU_PATH/proc" "${'$'}UBUNTU_PATH/sys" "${'$'}UBUNTU_PATH/dev" "${'$'}UBUNTU_PATH/dev/pts" "${'$'}UBUNTU_PATH/sdcard" "${'$'}UBUNTU_PATH$currentUserDataRootPath" "${'$'}UBUNTU_PATH/data/data" "${'$'}UBUNTU_PATH/data/local/tmp" "${'$'}UBUNTU_PATH${'$'}HOME_DIR" 2>/dev/null
+        "${'$'}BIN/busybox" mkdir -p "${'$'}UBUNTU_PATH/proc" "${'$'}UBUNTU_PATH/sys" "${'$'}UBUNTU_PATH/dev" "${'$'}UBUNTU_PATH/dev/pts" "${'$'}UBUNTU_PATH$guestSdcardPath" "${'$'}UBUNTU_PATH$currentUserDataRootPath" "${'$'}UBUNTU_PATH$operitLegacyDataRootPath" "${'$'}UBUNTU_PATH$localTmpPath" "${'$'}UBUNTU_PATH${'$'}HOME_DIR" 2>/dev/null
         "${'$'}BIN/busybox" mount -t proc proc "${'$'}UBUNTU_PATH/proc" 2>/dev/null || true
         "${'$'}BIN/busybox" mount --bind /dev "${'$'}UBUNTU_PATH/dev" 2>/dev/null || true
         "${'$'}BIN/busybox" mount --bind /sys "${'$'}UBUNTU_PATH/sys" 2>/dev/null || true
         "${'$'}BIN/busybox" mount --bind /dev/pts "${'$'}UBUNTU_PATH/dev/pts" 2>/dev/null || true
-        "${'$'}BIN/busybox" mount --bind $currentEmulatedStoragePath "${'$'}UBUNTU_PATH/sdcard" 2>/dev/null || true
+        "${'$'}BIN/busybox" mount --bind $currentEmulatedStoragePath "${'$'}UBUNTU_PATH$guestSdcardPath" 2>/dev/null || true
         "${'$'}BIN/busybox" mount --bind $currentUserDataRootPath "${'$'}UBUNTU_PATH$currentUserDataRootPath" 2>/dev/null || true
-        "${'$'}BIN/busybox" mount --bind /data/data "${'$'}UBUNTU_PATH/data/data" 2>/dev/null || true
-        "${'$'}BIN/busybox" mount --bind /data/local/tmp "${'$'}UBUNTU_PATH/data/local/tmp" 2>/dev/null || true
+        "${'$'}BIN/busybox" mount --bind $operitLegacyDataRootPath "${'$'}UBUNTU_PATH$operitLegacyDataRootPath" 2>/dev/null || true
+        "${'$'}BIN/busybox" mount --bind $localTmpPath "${'$'}UBUNTU_PATH$localTmpPath" 2>/dev/null || true
         "${'$'}BIN/busybox" mount --bind "${'$'}HOME_DIR" "${'$'}UBUNTU_PATH${'$'}HOME_DIR" 2>/dev/null || true
         COMMAND_TO_EXEC="$(cat "${'$'}CMD_FILE" 2>/dev/null)"
         "${'$'}BIN/busybox" chroot "${'$'}UBUNTU_PATH" /usr/bin/env -i HOME=/root TERM=xterm-256color LANG=en_US.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "COMMAND_TO_EXEC=${'$'}COMMAND_TO_EXEC" "OPERIT_UID=${'$'}OPERIT_UID" "OPERIT_GID=${'$'}OPERIT_GID" "OPERIT_GROUPS=${'$'}OPERIT_GROUPS" /bin/bash -lc 'echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; umask 0002; if [ -n "${'$'}OPERIT_GID" ]; then chown 0:"${'$'}OPERIT_GID" /root 2>/dev/null || true; chmod 2775 /root 2>/dev/null || true; fi; eval "${'$'}COMMAND_TO_EXEC"'

@@ -123,7 +123,7 @@
     <string name="settings">Settings</string>
     
     <!-- Additional new strings -->
-    <string name="initializing">Initializing...</string>
+    <string name="initializing">Initializing…</string>
     <string name="ftp_server_running_info">FTP Server Running\nAddress: %1$s:%2$s\nUsername: %3$s\nPassword: %4$s\nRoot Directory: Ubuntu File System</string>
     <string name="unknown_session">Unknown Session</string>
     
@@ -131,7 +131,7 @@
     <string name="ssh_tools_missing_title">SSH Tools Not Installed</string>
     <string name="ssh_tools_missing_message">Enabling SSH connection requires the following tools:\n\n• ssh - SSH client\n• sshpass - SSH password authentication tool\n\n Please go to the "Environment Setup" page to install SSH tools.</string>
     <string name="go_to_setup">Go to Setup</string>
-    <string name="checking_ssh_tools">Checking SSH tools...</string>
+    <string name="checking_ssh_tools">Checking SSH tools…</string>
     
     <!-- Shared TMP Settings -->
     <string name="shared_tmp_title">Shared Temporary Directory</string>
@@ -149,8 +149,14 @@
     <string name="chroot_mount_status_checking">Inspecting chroot mounts…</string>
     <string name="chroot_mount_status_unmounting">Unmounting chroot mounts…</string>
     <string name="chroot_mount_status_none">No active chroot hard mounts detected</string>
-    <string name="chroot_mount_status_detected">Detected %1$d active chroot hard mounts</string>
-    <string name="chroot_mount_status_unmounted">Unmounted %1$d chroot hard mounts</string>
+    <plurals name="chroot_mount_status_detected">
+        <item quantity="one">Detected %1$d active chroot hard mount</item>
+        <item quantity="other">Detected %1$d active chroot hard mounts</item>
+    </plurals>
+    <plurals name="chroot_mount_status_unmounted">
+        <item quantity="one">Unmounted %1$d chroot hard mount</item>
+        <item quantity="other">Unmounted %1$d chroot hard mounts</item>
+    </plurals>
     <string name="chroot_mount_status_failed">Mount operation failed: %1$s</string>
     <string name="chroot_mount_details_title">Current mount points:</string>
     
@@ -183,7 +189,7 @@
     <string name="font_size_label">Font Size (sp)</string>
     <string name="target_fps_dialog_title">Set Render Frame Rate</string>
     <string name="target_fps_label">Target Frame Rate (FPS)</string>
-    <string name="target_fps_hint">Range: 15-120. Recommended: 30-60. Higher values are smoother but use more power.</string>
+    <string name="target_fps_hint">Range: 15–120. Recommended: 30–60. Higher values are smoother but use more power.</string>
     <string name="font_path_dialog_title">Set Font File Path</string>
     <string name="font_path_label">Font File Path</string>
     <string name="font_path_hint">Leave empty to use default font</string>

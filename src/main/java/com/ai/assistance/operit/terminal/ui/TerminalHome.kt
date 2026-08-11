@@ -2,9 +2,7 @@ package com.ai.assistance.operit.terminal.ui
 
 import android.content.Context
 import android.graphics.Typeface
-import android.os.Build
 import android.view.inputmethod.InputMethodManager
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -36,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.AnnotatedString
@@ -68,7 +67,6 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun TerminalHome(
     env: TerminalEnv,
@@ -149,7 +147,7 @@ fun TerminalHome(
     val visualTransformation = remember { SyntaxHighlightingVisualTransformation() }
 
     // 缩放状态
-    var scaleFactor by remember { mutableStateOf(1f) }
+    var scaleFactor by remember { mutableFloatStateOf(1f) }
 
     // 删除确认弹窗状态
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
@@ -505,7 +503,7 @@ fun TerminalHome(
     // 删除确认弹窗
     if (showDeleteConfirmDialog && sessionToDelete != null) {
         val context = LocalContext.current
-        val sessionTitle = env.sessions.find { it.id == sessionToDelete }?.title ?: context.getString(com.ai.assistance.operit.terminal.R.string.unknown_session)
+        val sessionTitle = env.sessions.find { it.id == sessionToDelete }?.title ?: stringResource(com.ai.assistance.operit.terminal.R.string.unknown_session)
 
         AlertDialog(
             onDismissRequest = {
@@ -514,13 +512,13 @@ fun TerminalHome(
             },
             title = {
                 Text(
-                    text = context.getString(com.ai.assistance.operit.terminal.R.string.confirm_delete_session),
+                    text = stringResource(com.ai.assistance.operit.terminal.R.string.confirm_delete_session),
                     color = Color.White
                 )
             },
             text = {
                 Text(
-                    text = context.getString(com.ai.assistance.operit.terminal.R.string.delete_session_message, sessionTitle),
+                    text = stringResource(com.ai.assistance.operit.terminal.R.string.delete_session_message, sessionTitle),
                     color = Color.Gray
                 )
             },
@@ -535,7 +533,7 @@ fun TerminalHome(
                     }
                 ) {
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.delete),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.delete),
                         color = Color.Red
                     )
                 }
@@ -548,7 +546,7 @@ fun TerminalHome(
                     }
                 ) {
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.cancel),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.cancel),
                         color = Color.White
                     )
                 }
@@ -571,8 +569,8 @@ private fun getTruncatedPrompt(prompt: String, maxLength: Int = 16): String {
 
 @Composable
 private fun rememberSettledImeBottomPx(targetBottomPx: Int, settleDelayMs: Long = 160L): Int {
-    var settledBottomPx by remember { mutableStateOf(targetBottomPx) }
-    var previousTargetBottomPx by remember { mutableStateOf(targetBottomPx) }
+    var settledBottomPx by remember { mutableIntStateOf(targetBottomPx) }
+    var previousTargetBottomPx by remember { mutableIntStateOf(targetBottomPx) }
 
     LaunchedEffect(targetBottomPx) {
         val previousTarget = previousTargetBottomPx
@@ -637,7 +635,7 @@ private fun TerminalToolbar(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = context.getString(com.ai.assistance.operit.terminal.R.string.interrupt),
+                            text = stringResource(com.ai.assistance.operit.terminal.R.string.interrupt),
                             color = Color.Gray,
                             fontFamily = FontFamily.Default,
                             fontSize = fontSize * 0.9f
@@ -667,7 +665,7 @@ private fun TerminalToolbar(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.environment_setup),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.environment_setup),
                         color = Color.White,
                         fontFamily = FontFamily.Default,
                         fontSize = fontSize,
@@ -708,7 +706,7 @@ private fun TerminalToolbar(
             // 设置按钮
             Icon(
                 imageVector = Icons.Default.Settings,
-                contentDescription = context.getString(com.ai.assistance.operit.terminal.R.string.settings),
+                contentDescription = stringResource(com.ai.assistance.operit.terminal.R.string.settings),
                 tint = Color.Gray,
                 modifier = Modifier
                     .clickable { onNavigateToSettings() }

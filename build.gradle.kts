@@ -206,14 +206,14 @@ dependencies {
     implementation(libs.kotlin.parcelize.runtime)
     
     // SSH 依赖
-    implementation("com.jcraft:jsch:0.1.55")
+    implementation(libs.jsch)
     
     // FTP服务器依赖
-    implementation("org.apache.ftpserver:ftpserver-core:1.2.0") {
+    implementation(libs.ftpserver.core) {
         exclude(group = "org.bouncycastle", module = "bcprov-jdk15to18")
         exclude(group = "org.apache.mina", module = "mina-core")
     }
-    implementation("org.apache.ftpserver:ftplet-api:1.2.0")
+    implementation(libs.ftpserver.ftplet.api)
     implementation(files(sanitizeMinaCore.flatMap { it.archiveFile }).builtBy(sanitizeMinaCore))
     
     // SSHD服务器依赖

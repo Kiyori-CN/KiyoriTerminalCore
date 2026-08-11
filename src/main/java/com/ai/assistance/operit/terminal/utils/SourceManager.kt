@@ -2,6 +2,7 @@ package com.ai.assistance.operit.terminal.utils
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import com.ai.assistance.operit.terminal.data.MirrorSource
 import com.ai.assistance.operit.terminal.data.PackageManagerType
 import kotlinx.serialization.encodeToString
@@ -77,7 +78,7 @@ class SourceManager(context: Context) {
             PackageManagerType.NPM -> "custom_npm_sources"
             PackageManagerType.RUST -> "custom_rust_sources"
         }
-        prefs.edit().putString(key, json.encodeToString(customSources)).apply()
+        prefs.edit {putString(key, json.encodeToString(customSources))}
     }
     
     // 删除自定义源
@@ -91,7 +92,7 @@ class SourceManager(context: Context) {
             PackageManagerType.NPM -> "custom_npm_sources"
             PackageManagerType.RUST -> "custom_rust_sources"
         }
-        prefs.edit().putString(key, json.encodeToString(customSources)).apply()
+        prefs.edit {putString(key, json.encodeToString(customSources))}
     }
     
     // 获取所有源（内置 + 自定义）
@@ -130,15 +131,15 @@ class SourceManager(context: Context) {
 
     // 保存选择的源ID
     fun setSelectedSourceId(pm: PackageManagerType, sourceId: String) {
-        prefs.edit().putString(
-            when (pm) {
-                PackageManagerType.APT -> "selected_apt_source"
-                PackageManagerType.PIP -> "selected_pip_source"
-                PackageManagerType.NPM -> "selected_npm_source"
-                PackageManagerType.RUST -> "selected_rust_source"
-            },
-            sourceId
-        ).apply()
+        prefs.edit {putString(
+                when (pm) {
+                    PackageManagerType.APT -> "selected_apt_source"
+                    PackageManagerType.PIP -> "selected_pip_source"
+                    PackageManagerType.NPM -> "selected_npm_source"
+                    PackageManagerType.RUST -> "selected_rust_source"
+                },
+                sourceId
+        )}
     }
     
     // 生成更改APT源的Shell命令

@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.terminal.ui
 
 import android.app.Application
+import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ai.assistance.operit.terminal.utils.CacheManager
@@ -375,7 +376,7 @@ class SettingsViewModel(
     }
     
     fun setSharedTmpEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("shared_tmp_enabled", enabled).apply()
+        prefs.edit {putBoolean("shared_tmp_enabled", enabled)}
         _sharedTmpEnabled.value = enabled
     }
     
@@ -395,8 +396,9 @@ class SettingsViewModel(
             return
         }
 
-        _chrootMountStatus.value = app.getString(
-            com.ai.assistance.operit.terminal.R.string.chroot_mount_status_detected,
+        _chrootMountStatus.value = app.resources.getQuantityString(
+            com.ai.assistance.operit.terminal.R.plurals.chroot_mount_status_detected,
+            result.count,
             result.count
         )
         _chrootMountDetails.value = result.mountPoints.joinToString("\n")
@@ -430,8 +432,9 @@ class SettingsViewModel(
                 val removedCount = cacheManager.unmountUbuntuMounts(terminalManagerRef)
                 val result = cacheManager.inspectUbuntuMounts()
                 _chrootMountStatus.value = if (removedCount > 0) {
-                    getApplication<Application>().getString(
-                        com.ai.assistance.operit.terminal.R.string.chroot_mount_status_unmounted,
+                    getApplication<Application>().resources.getQuantityString(
+                        com.ai.assistance.operit.terminal.R.plurals.chroot_mount_status_unmounted,
+                        removedCount,
                         removedCount
                     )
                 } else {
@@ -456,7 +459,7 @@ class SettingsViewModel(
     }
     
     fun setChrootEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("chroot_enabled", enabled).apply()
+        prefs.edit {putBoolean("chroot_enabled", enabled)}
         _chrootEnabled.value = enabled
         if (!enabled) {
             _chrootMountStatus.value = getApplication<Application>()

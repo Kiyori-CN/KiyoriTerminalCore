@@ -22,7 +22,7 @@ import java.security.Security
  * 用于反向SSH隧道场景，允许远程服务器通过sshfs挂载本地Android存储
  * 不占用终端，独立运行
  */
-class SSHDServerManager private constructor(private val context: Context) {
+class SSHDServerManager private constructor(private val filesDir: File) {
     
     companion object {
         private const val TAG = "SSHDServerManager"
@@ -32,9 +32,10 @@ class SSHDServerManager private constructor(private val context: Context) {
         
         fun getInstance(context: Context): SSHDServerManager {
             return instance ?: synchronized(this) {
-                instance ?: SSHDServerManager(context.applicationContext).also { 
+                val filesDir = context.applicationContext.filesDir
+                instance ?: SSHDServerManager(filesDir).also {
                     instance = it
-                    initializeForAndroid(context.applicationContext)
+                    initializeForAndroid(filesDir)
                 }
             }
         }
@@ -42,11 +43,11 @@ class SSHDServerManager private constructor(private val context: Context) {
         /**
          * Initialize system properties and security providers for Android compatibility
          */
-        private fun initializeForAndroid(context: Context) {
+        private fun initializeForAndroid(filesDir: File) {
             // Set system properties for Android compatibility
             // SSHD tries to access user.home which doesn't exist on Android
-            System.setProperty("user.home", context.filesDir.absolutePath)
-            System.setProperty("user.dir", context.filesDir.absolutePath)
+            System.setProperty("user.home", filesDir.absolutePath)
+            System.setProperty("user.dir", filesDir.absolutePath)
             
             // Register BouncyCastle provider to avoid JMX issues on Android
             // see: https://issues.apache.org/jira/browse/SSHD-1236
@@ -72,7 +73,7 @@ class SSHDServerManager private constructor(private val context: Context) {
             }
             
             // 确保 .ssh 目录存在
-            val sshDir = File(context.filesDir, ".ssh")
+            val sshDir = File(filesDir, ".ssh")
             if (!sshDir.exists()) {
                 sshDir.mkdirs()
             }
@@ -85,7 +86,7 @@ class SSHDServerManager private constructor(private val context: Context) {
             Log.d(TAG, "Setting SSHD port to: ${sshConfig.localSshPort}")
             
             // 配置主机密钥（自动生成并保存）
-            val hostKeyPath = File(context.filesDir, "hostkey.ser")
+            val hostKeyPath = File(filesDir, "hostkey.ser")
             server.keyPairProvider = SimpleGeneratorHostKeyProvider(hostKeyPath.toPath())
             
             // 配置密码认证

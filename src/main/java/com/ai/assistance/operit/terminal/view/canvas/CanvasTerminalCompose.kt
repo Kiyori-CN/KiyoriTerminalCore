@@ -92,7 +92,7 @@ fun ConfigurableCanvasTerminal(
         )
     }
     
-    var currentScale by remember { mutableStateOf(1f) }
+    var currentScale by remember { mutableFloatStateOf(1f) }
     
     CanvasTerminalScreen(
         emulator = emulator,

@@ -1,7 +1,5 @@
 package com.ai.assistance.operit.terminal.ui
 
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -58,7 +57,6 @@ data class PackageCategory(
     val packages: List<PackageItem>
 )
 
-@RequiresApi(Build.VERSION_CODES.O)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SetupScreen(
@@ -76,67 +74,136 @@ fun SetupScreen(
         isSSHEnabled = sshConfigManager.isEnabled()
     }
     
-    val packageCategories by remember {
-        derivedStateOf {
-            listOf(
-                PackageCategory(
-                    id = "nodejs",
-                    name = context.getString(com.ai.assistance.operit.terminal.R.string.category_nodejs_name),
-                    description = context.getString(com.ai.assistance.operit.terminal.R.string.category_nodejs_desc),
-                    packages = listOf(
-                        PackageItem("nodejs", context.getString(com.ai.assistance.operit.terminal.R.string.package_nodejs_name), "curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt install -y nodejs", context.getString(com.ai.assistance.operit.terminal.R.string.package_nodejs_desc)),
-                        PackageItem("pnpm", context.getString(com.ai.assistance.operit.terminal.R.string.package_pnpm_name), "typescript", context.getString(com.ai.assistance.operit.terminal.R.string.package_pnpm_desc))
-                    )
-                ),
-                PackageCategory(
-                    id = "python",
-                    name = context.getString(com.ai.assistance.operit.terminal.R.string.category_python_name),
-                    description = context.getString(com.ai.assistance.operit.terminal.R.string.category_python_desc),
-                    packages = listOf(
-                        PackageItem("python-is-python3", context.getString(com.ai.assistance.operit.terminal.R.string.package_python_link_name), "python-is-python3", context.getString(com.ai.assistance.operit.terminal.R.string.package_python_link_desc)),
-                        PackageItem("python3-venv", context.getString(com.ai.assistance.operit.terminal.R.string.package_python_venv_name), "python3-venv", context.getString(com.ai.assistance.operit.terminal.R.string.package_python_venv_desc)),
-                        PackageItem("python3-pip", context.getString(com.ai.assistance.operit.terminal.R.string.package_python_pip_name), "python3-pip", context.getString(com.ai.assistance.operit.terminal.R.string.package_python_pip_desc)),
-                        PackageItem("uv", context.getString(com.ai.assistance.operit.terminal.R.string.package_uv_name), "pipx install uv", context.getString(com.ai.assistance.operit.terminal.R.string.package_uv_desc))
-                    )
-                ),
-                PackageCategory(
-                    id = "ssh",
-                    name = context.getString(com.ai.assistance.operit.terminal.R.string.category_ssh_name),
-                    description = context.getString(com.ai.assistance.operit.terminal.R.string.category_ssh_desc),
-                    packages = listOf(
-                        PackageItem("ssh", context.getString(com.ai.assistance.operit.terminal.R.string.package_ssh_client_name), "ssh", context.getString(com.ai.assistance.operit.terminal.R.string.package_ssh_client_desc)),
-                        PackageItem("sshpass", context.getString(com.ai.assistance.operit.terminal.R.string.package_sshpass_name), "sshpass", context.getString(com.ai.assistance.operit.terminal.R.string.package_sshpass_desc)),
-                        PackageItem("openssh-server", "OpenSSH 服务器", "openssh-server", "用于反向隧道挂载本地文件系统")
-                    )
-                ),
-                PackageCategory(
-                    id = "java", 
-                    name = context.getString(com.ai.assistance.operit.terminal.R.string.category_java_name),
-                    description = context.getString(com.ai.assistance.operit.terminal.R.string.category_java_desc),
-                    packages = listOf(
-                        PackageItem("openjdk-17", context.getString(com.ai.assistance.operit.terminal.R.string.package_openjdk_name), "openjdk-17-jdk", context.getString(com.ai.assistance.operit.terminal.R.string.package_openjdk_desc)),
-                        PackageItem("gradle", context.getString(com.ai.assistance.operit.terminal.R.string.package_gradle_name), "gradle", context.getString(com.ai.assistance.operit.terminal.R.string.package_gradle_desc))
-                    )
-                ),
-                PackageCategory(
-                    id = "rust",
-                    name = context.getString(com.ai.assistance.operit.terminal.R.string.category_rust_name),
-                    description = context.getString(com.ai.assistance.operit.terminal.R.string.category_rust_desc),
-                    packages = listOf(
-                        PackageItem("rust", context.getString(com.ai.assistance.operit.terminal.R.string.package_rust_name), "RUST_INSTALL_COMMAND", context.getString(com.ai.assistance.operit.terminal.R.string.package_rust_desc))
-                    )
-                ),
-                PackageCategory(
-                    id = "go",
-                    name = context.getString(com.ai.assistance.operit.terminal.R.string.category_go_name),
-                    description = context.getString(com.ai.assistance.operit.terminal.R.string.category_go_desc),
-                    packages = listOf(
-                        PackageItem("go", context.getString(com.ai.assistance.operit.terminal.R.string.package_go_name), "golang-go", context.getString(com.ai.assistance.operit.terminal.R.string.package_go_desc))
-                    )
-                )
-            )
-        }
-    }
+    // 资源值必须在 Composable 作用域中解析，避免把旧 Locale 文案缓存进 remember 状态。
+    val packageCategories =
+        listOf(
+            PackageCategory(
+                id = "nodejs",
+                name = stringResource(com.ai.assistance.operit.terminal.R.string.category_nodejs_name),
+                description = stringResource(com.ai.assistance.operit.terminal.R.string.category_nodejs_desc),
+                packages =
+                    listOf(
+                        PackageItem(
+                            "nodejs",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_nodejs_name),
+                            "curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt install -y nodejs",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_nodejs_desc),
+                        ),
+                        PackageItem(
+                            "pnpm",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_pnpm_name),
+                            "typescript",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_pnpm_desc),
+                        ),
+                    ),
+            ),
+            PackageCategory(
+                id = "python",
+                name = stringResource(com.ai.assistance.operit.terminal.R.string.category_python_name),
+                description = stringResource(com.ai.assistance.operit.terminal.R.string.category_python_desc),
+                packages =
+                    listOf(
+                        PackageItem(
+                            "python-is-python3",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_python_link_name),
+                            "python-is-python3",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_python_link_desc),
+                        ),
+                        PackageItem(
+                            "python3-venv",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_python_venv_name),
+                            "python3-venv",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_python_venv_desc),
+                        ),
+                        PackageItem(
+                            "python3-pip",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_python_pip_name),
+                            "python3-pip",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_python_pip_desc),
+                        ),
+                        PackageItem(
+                            "uv",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_uv_name),
+                            "pipx install uv",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_uv_desc),
+                        ),
+                    ),
+            ),
+            PackageCategory(
+                id = "ssh",
+                name = stringResource(com.ai.assistance.operit.terminal.R.string.category_ssh_name),
+                description = stringResource(com.ai.assistance.operit.terminal.R.string.category_ssh_desc),
+                packages =
+                    listOf(
+                        PackageItem(
+                            "ssh",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_ssh_client_name),
+                            "ssh",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_ssh_client_desc),
+                        ),
+                        PackageItem(
+                            "sshpass",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_sshpass_name),
+                            "sshpass",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_sshpass_desc),
+                        ),
+                        PackageItem(
+                            "openssh-server",
+                            "OpenSSH 服务器",
+                            "openssh-server",
+                            "用于反向隧道挂载本地文件系统",
+                        ),
+                    ),
+            ),
+            PackageCategory(
+                id = "java",
+                name = stringResource(com.ai.assistance.operit.terminal.R.string.category_java_name),
+                description = stringResource(com.ai.assistance.operit.terminal.R.string.category_java_desc),
+                packages =
+                    listOf(
+                        PackageItem(
+                            "openjdk-17",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_openjdk_name),
+                            "openjdk-17-jdk",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_openjdk_desc),
+                        ),
+                        PackageItem(
+                            "gradle",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_gradle_name),
+                            "gradle",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_gradle_desc),
+                        ),
+                    ),
+            ),
+            PackageCategory(
+                id = "rust",
+                name = stringResource(com.ai.assistance.operit.terminal.R.string.category_rust_name),
+                description = stringResource(com.ai.assistance.operit.terminal.R.string.category_rust_desc),
+                packages =
+                    listOf(
+                        PackageItem(
+                            "rust",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_rust_name),
+                            "RUST_INSTALL_COMMAND",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_rust_desc),
+                        ),
+                    ),
+            ),
+            PackageCategory(
+                id = "go",
+                name = stringResource(com.ai.assistance.operit.terminal.R.string.category_go_name),
+                description = stringResource(com.ai.assistance.operit.terminal.R.string.category_go_desc),
+                packages =
+                    listOf(
+                        PackageItem(
+                            "go",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_go_name),
+                            "golang-go",
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_go_desc),
+                        ),
+                    ),
+            ),
+        )
 
     // 跟踪每个分类的展开状态
     val expandedCategories = remember { mutableStateMapOf<String, Boolean>() }
@@ -214,8 +281,8 @@ fun SetupScreen(
     if (showSetupDialog) {
         AlertDialog(
             onDismissRequest = { showSetupDialog = false },
-            title = { Text(context.getString(com.ai.assistance.operit.terminal.R.string.setup_dialog_title)) },
-            text = { Text(context.getString(com.ai.assistance.operit.terminal.R.string.setup_dialog_message)) },
+            title = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.setup_dialog_title)) },
+            text = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.setup_dialog_message)) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -230,7 +297,7 @@ fun SetupScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006400))
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.dialog_confirm), color = Color.White)
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.dialog_confirm), color = Color.White)
                 }
             },
             dismissButton = {
@@ -238,7 +305,7 @@ fun SetupScreen(
                     onClick = { showSetupDialog = false },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A4A4A))
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.dialog_cancel), color = Color.White)
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.dialog_cancel), color = Color.White)
                 }
             },
             containerColor = Color(0xFF2D2D2D),
@@ -255,7 +322,7 @@ fun SetupScreen(
     ) {
         // 标题
         Text(
-            text = context.getString(com.ai.assistance.operit.terminal.R.string.setup_title),
+            text = stringResource(com.ai.assistance.operit.terminal.R.string.setup_title),
             color = Color.White,
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
@@ -263,7 +330,7 @@ fun SetupScreen(
         )
         
         Text(
-            text = context.getString(com.ai.assistance.operit.terminal.R.string.setup_subtitle),
+            text = stringResource(com.ai.assistance.operit.terminal.R.string.setup_subtitle),
             color = Color.Gray,
             fontSize = 14.sp,
             modifier = Modifier.padding(bottom = 16.dp)
@@ -339,7 +406,7 @@ fun SetupScreen(
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A4A4A))
             ) {
-                Text(context.getString(com.ai.assistance.operit.terminal.R.string.skip), color = Color.White)
+                Text(stringResource(com.ai.assistance.operit.terminal.R.string.skip), color = Color.White)
             }
             
             Button(
@@ -444,7 +511,7 @@ fun SetupScreen(
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006400))
             ) {
-                Text(context.getString(com.ai.assistance.operit.terminal.R.string.start_setup), color = Color.White)
+                Text(stringResource(com.ai.assistance.operit.terminal.R.string.start_setup), color = Color.White)
             }
         }
     }
@@ -487,7 +554,7 @@ private fun CategoryCard(
                     // Operit必须标签 - 第二行
                     if (category.id == "nodejs" || category.id == "python") {
                         Text(
-                            text = "(${context.getString(com.ai.assistance.operit.terminal.R.string.operit_required)})",
+                            text = "(${stringResource(com.ai.assistance.operit.terminal.R.string.operit_required)})",
                             color = Color(0xFFFFA500), // Orange color
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Bold,
@@ -524,7 +591,7 @@ private fun CategoryCard(
                         )
                     )
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.select_all),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.select_all),
                         color = Color.White,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(end = 8.dp)
@@ -534,7 +601,7 @@ private fun CategoryCard(
                 // 展开/收起图标
                 Icon(
                     imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = if (isExpanded) context.getString(com.ai.assistance.operit.terminal.R.string.collapse) else context.getString(com.ai.assistance.operit.terminal.R.string.expand),
+                    contentDescription = if (isExpanded) stringResource(com.ai.assistance.operit.terminal.R.string.collapse) else stringResource(com.ai.assistance.operit.terminal.R.string.expand),
                     tint = Color.White
                 )
             }
@@ -612,7 +679,7 @@ private fun PackageItem(
                 )
                 if (isInstalled) {
                     Text(
-                        text = " (${context.getString(com.ai.assistance.operit.terminal.R.string.installed)})",
+                        text = " (${stringResource(com.ai.assistance.operit.terminal.R.string.installed)})",
                         color = Color.Green.copy(alpha = 0.8f),
                         fontSize = 12.sp,
                         modifier = Modifier.padding(start = 4.dp)
@@ -631,7 +698,6 @@ private fun PackageItem(
     }
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
 private suspend fun checkPackageInstalled(
     terminalManager: TerminalManager,
     sessionId: String,
@@ -668,7 +734,6 @@ private suspend fun checkPackageInstalled(
     }
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
 private suspend fun executeCommandAndGetOutput(
     terminalManager: TerminalManager,
     sessionId: String,

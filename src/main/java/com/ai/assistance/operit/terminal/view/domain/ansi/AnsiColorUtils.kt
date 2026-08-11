@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.terminal.view.domain.ansi
 
 import android.graphics.Color
+import androidx.core.graphics.toColorInt
 
 /**
  * ANSI 颜色处理工具
@@ -11,14 +12,14 @@ object AnsiColorUtils {
      * 标准 ANSI 颜色 (30-37, 40-47)
      */
     fun getAnsiColor(index: Int): Int = when(index) {
-        0 -> Color.parseColor("#000000") // Black
-        1 -> Color.parseColor("#CD0000") // Red
-        2 -> Color.parseColor("#00CD00") // Green
-        3 -> Color.parseColor("#CDCD00") // Yellow
-        4 -> Color.parseColor("#0000EE") // Blue
-        5 -> Color.parseColor("#CD00CD") // Magenta
-        6 -> Color.parseColor("#00CDCD") // Cyan
-        7 -> Color.parseColor("#E5E5E5") // White
+        0 -> "#000000".toColorInt() // Black
+        1 -> "#CD0000".toColorInt() // Red
+        2 -> "#00CD00".toColorInt() // Green
+        3 -> "#CDCD00".toColorInt() // Yellow
+        4 -> "#0000EE".toColorInt() // Blue
+        5 -> "#CD00CD".toColorInt() // Magenta
+        6 -> "#00CDCD".toColorInt() // Cyan
+        7 -> "#E5E5E5".toColorInt() // White
         else -> Color.WHITE
     }
     
@@ -26,14 +27,14 @@ object AnsiColorUtils {
      * 明亮 ANSI 颜色 (90-97, 100-107)
      */
     fun getAnsiBrightColor(index: Int): Int = when(index) {
-        0 -> Color.parseColor("#7F7F7F") // Bright Black (Gray)
-        1 -> Color.parseColor("#FF0000") // Bright Red
-        2 -> Color.parseColor("#00FF00") // Bright Green
-        3 -> Color.parseColor("#FFFF00") // Bright Yellow
-        4 -> Color.parseColor("#5C5CFF") // Bright Blue
-        5 -> Color.parseColor("#FF00FF") // Bright Magenta
-        6 -> Color.parseColor("#00FFFF") // Bright Cyan
-        7 -> Color.parseColor("#FFFFFF") // Bright White
+        0 -> "#7F7F7F".toColorInt() // Bright Black (Gray)
+        1 -> "#FF0000".toColorInt() // Bright Red
+        2 -> "#00FF00".toColorInt() // Bright Green
+        3 -> "#FFFF00".toColorInt() // Bright Yellow
+        4 -> "#5C5CFF".toColorInt() // Bright Blue
+        5 -> "#FF00FF".toColorInt() // Bright Magenta
+        6 -> "#00FFFF".toColorInt() // Bright Cyan
+        7 -> "#FFFFFF".toColorInt() // Bright White
         else -> Color.WHITE
     }
     
@@ -100,4 +101,4 @@ object AnsiColorUtils {
         
         return null
     }
-} 
+}

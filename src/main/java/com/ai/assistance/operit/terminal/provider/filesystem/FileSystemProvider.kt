@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.terminal.provider.filesystem
 
+import android.os.Environment
 import android.os.Process
 import java.io.File
 
@@ -23,7 +24,16 @@ object PRootMountMapping {
 
     fun currentEmulatedStoragePath(): String = "/storage/emulated/${currentUserId()}"
 
-    fun currentUserDataRootPath(): String = "/data/user/${currentUserId()}"
+    fun currentUserDataRootPath(): String =
+        File(File(Environment.getDataDirectory(), "user"), currentUserId().toString()).path
+
+    fun legacyDataRootPath(): String = File(Environment.getDataDirectory(), "data").path
+
+    fun legacyAppDataPath(packageName: String): String = File(legacyDataRootPath(), packageName).path
+
+    fun localTmpPath(): String = File(File(Environment.getDataDirectory(), "local"), "tmp").path
+
+    fun guestSdcardPath(): String = File(File.separator, "sdcard").path
 
     private fun buildBaseBindMounts(): List<PRootBindMount> {
         val emulatedStoragePath = currentEmulatedStoragePath()
@@ -36,9 +46,9 @@ object PRootMountMapping {
             PRootBindMount("/proc/self/fd/0", "/dev/stdin"),
             PRootBindMount("/proc/self/fd/1", "/dev/stdout"),
             PRootBindMount("/proc/self/fd/2", "/dev/stderr"),
-            PRootBindMount(emulatedStoragePath, "/sdcard"),
+            PRootBindMount(emulatedStoragePath, guestSdcardPath()),
             PRootBindMount(emulatedStoragePath, emulatedStoragePath),
-            PRootBindMount("/data/local/tmp", "/data/local/tmp")
+            PRootBindMount(localTmpPath(), localTmpPath())
         )
     }
 
@@ -51,15 +61,16 @@ object PRootMountMapping {
         chrootEnabled: Boolean
     ): List<PRootBindMount> {
         val userDataRootPath = currentUserDataRootPath()
+        val legacyDataRootPath = legacyDataRootPath()
         return if (chrootEnabled) {
             listOf(
                 PRootBindMount(userDataRootPath, userDataRootPath),
-                PRootBindMount("/data/data", "/data/data")
+                PRootBindMount(legacyDataRootPath, legacyDataRootPath)
             )
         } else {
             listOf(
                 PRootBindMount(appDataDir, "$userDataRootPath/$packageName"),
-                PRootBindMount(appDataDir, "/data/data/$packageName")
+                PRootBindMount(appDataDir, legacyAppDataPath(packageName))
             )
         }
     }

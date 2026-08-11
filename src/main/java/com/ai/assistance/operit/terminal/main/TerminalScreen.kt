@@ -6,7 +6,6 @@ import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.os.Build
 import android.view.WindowManager
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.edit
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -47,7 +47,6 @@ import com.ai.assistance.operit.terminal.ui.SetupScreen
 import com.ai.assistance.operit.terminal.ui.TerminalHome
 import com.ai.assistance.operit.terminal.ui.SettingsScreen
 
-@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun TerminalScreen(
     env: TerminalEnv,
@@ -111,14 +110,14 @@ fun TerminalScreen(
             SetupScreen(
                 onBack = {
                     val sharedPreferences = context.getSharedPreferences("terminal_prefs", Context.MODE_PRIVATE)
-                    sharedPreferences.edit().putBoolean("is_first_launch", false).apply()
+                    sharedPreferences.edit {putBoolean("is_first_launch", false)}
                     navController.navigate(TerminalRoutes.TERMINAL_HOME_ROUTE) {
                         popUpTo(TerminalRoutes.SETUP_ROUTE) { inclusive = true }
                     }
                 },
                 onSetup = { commands ->
                     val sharedPreferences = context.getSharedPreferences("terminal_prefs", Context.MODE_PRIVATE)
-                    sharedPreferences.edit().putBoolean("is_first_launch", false).apply()
+                    sharedPreferences.edit {putBoolean("is_first_launch", false)}
                     env.onSetup(commands)
                     navController.navigate(TerminalRoutes.TERMINAL_HOME_ROUTE) {
                         popUpTo(TerminalRoutes.SETUP_ROUTE) { inclusive = true }

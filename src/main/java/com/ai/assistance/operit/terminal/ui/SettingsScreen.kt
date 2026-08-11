@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -78,10 +79,10 @@ fun SettingsScreen(
     
     // 字体配置相关状态
     val fontConfigManager = remember { TerminalFontConfigManager.getInstance(context) }
-    var fontSize by remember { mutableStateOf(fontConfigManager.getFontSize()) }
+    var fontSize by remember { mutableFloatStateOf(fontConfigManager.getFontSize()) }
     var fontPath by remember { mutableStateOf(fontConfigManager.getFontPath() ?: "") }
     var fontName by remember { mutableStateOf(fontConfigManager.getFontName() ?: "") }
-    var targetFps by remember { mutableStateOf(fontConfigManager.getTargetFps()) }
+    var targetFps by remember { mutableIntStateOf(fontConfigManager.getTargetFps()) }
     var showFontSizeDialog by remember { mutableStateOf(false) }
     var showFontPathDialog by remember { mutableStateOf(false) }
     var showFontNameDialog by remember { mutableStateOf(false) }
@@ -124,10 +125,10 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(context.getString(com.ai.assistance.operit.terminal.R.string.settings_title), color = SettingsTheme.onSurfaceColor) },
+                title = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.settings_title), color = SettingsTheme.onSurfaceColor) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = context.getString(com.ai.assistance.operit.terminal.R.string.back), tint = SettingsTheme.onSurfaceColor)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(com.ai.assistance.operit.terminal.R.string.back), tint = SettingsTheme.onSurfaceColor)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -155,7 +156,7 @@ fun SettingsScreen(
                     modifier = Modifier.padding(16.dp)
                 ) {
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.ftp_server_title),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.ftp_server_title),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = SettingsTheme.onSurfaceColor
@@ -188,7 +189,7 @@ fun SettingsScreen(
                                     Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
                                 }
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text(if (isManagingFtpServer) context.getString(com.ai.assistance.operit.terminal.R.string.ftp_server_stopping) else context.getString(com.ai.assistance.operit.terminal.R.string.ftp_server_stop))
+                                Text(if (isManagingFtpServer) stringResource(com.ai.assistance.operit.terminal.R.string.ftp_server_stopping) else stringResource(com.ai.assistance.operit.terminal.R.string.ftp_server_stop))
                             }
                         } else {
                             Button(
@@ -207,7 +208,7 @@ fun SettingsScreen(
                                     Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                                 }
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text(if (isManagingFtpServer) context.getString(com.ai.assistance.operit.terminal.R.string.ftp_server_starting) else context.getString(com.ai.assistance.operit.terminal.R.string.ftp_server_start))
+                                Text(if (isManagingFtpServer) stringResource(com.ai.assistance.operit.terminal.R.string.ftp_server_starting) else stringResource(com.ai.assistance.operit.terminal.R.string.ftp_server_start))
                             }
                         }
                     }
@@ -215,13 +216,13 @@ fun SettingsScreen(
                     if (isFtpServerRunning) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = context.getString(com.ai.assistance.operit.terminal.R.string.ftp_server_tip),
+                            text = stringResource(com.ai.assistance.operit.terminal.R.string.ftp_server_tip),
                             color = SettingsTheme.primaryColor,
                             fontSize = 12.sp
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = context.getString(com.ai.assistance.operit.terminal.R.string.ftp_server_suggestion),
+                            text = stringResource(com.ai.assistance.operit.terminal.R.string.ftp_server_suggestion),
                             color = SettingsTheme.primaryColor,
                             fontSize = 12.sp
                         )
@@ -240,14 +241,14 @@ fun SettingsScreen(
                     modifier = Modifier.padding(16.dp)
                 ) {
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.storage_management_title),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.storage_management_title),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = SettingsTheme.onSurfaceColor
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.ubuntu_environment_size, cacheSize),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.ubuntu_environment_size, cacheSize),
                         color = SettingsTheme.onSurfaceVariant,
                         fontSize = 14.sp
                     )
@@ -275,7 +276,7 @@ fun SettingsScreen(
                                 Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                             }
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (isCalculatingCache) context.getString(com.ai.assistance.operit.terminal.R.string.refresh_size_calculating) else context.getString(com.ai.assistance.operit.terminal.R.string.refresh_size))
+                            Text(if (isCalculatingCache) stringResource(com.ai.assistance.operit.terminal.R.string.refresh_size_calculating) else stringResource(com.ai.assistance.operit.terminal.R.string.refresh_size))
                         }
                         
                         Button(
@@ -285,7 +286,7 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(context.getString(com.ai.assistance.operit.terminal.R.string.reset_environment))
+                            Text(stringResource(com.ai.assistance.operit.terminal.R.string.reset_environment))
                         }
                     }
                 }
@@ -302,14 +303,14 @@ fun SettingsScreen(
                     modifier = Modifier.padding(16.dp)
                 ) {
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.project_address_title),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.project_address_title),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = SettingsTheme.onSurfaceColor
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.project_name),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.project_name),
                         color = SettingsTheme.onSurfaceVariant,
                         fontSize = 14.sp
                     )
@@ -336,7 +337,7 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(context.getString(com.ai.assistance.operit.terminal.R.string.visit_project))
+                            Text(stringResource(com.ai.assistance.operit.terminal.R.string.visit_project))
                         }
                     }
                 }
@@ -360,13 +361,13 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = context.getString(com.ai.assistance.operit.terminal.R.string.ssh_enable_title),
+                                text = stringResource(com.ai.assistance.operit.terminal.R.string.ssh_enable_title),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = SettingsTheme.onSurfaceColor
                             )
                             if (sshConfig != null) {
                             Text(
-                                text = if (sshEnabled) context.getString(com.ai.assistance.operit.terminal.R.string.ssh_use_remote_desc) else context.getString(com.ai.assistance.operit.terminal.R.string.ssh_use_local_desc),
+                                text = if (sshEnabled) stringResource(com.ai.assistance.operit.terminal.R.string.ssh_use_remote_desc) else stringResource(com.ai.assistance.operit.terminal.R.string.ssh_use_local_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = SettingsTheme.onSurfaceColor.copy(alpha = 0.6f)
                             )
@@ -375,13 +376,13 @@ fun SettingsScreen(
                                 if (config.enableReverseTunnel) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = context.getString(com.ai.assistance.operit.terminal.R.string.ssh_reverse_mount_enabled),
+                                        text = stringResource(com.ai.assistance.operit.terminal.R.string.ssh_reverse_mount_enabled),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = SettingsTheme.primaryColor,
                                         fontWeight = FontWeight.Medium
                                     )
                                     Text(
-                                        text = context.getString(com.ai.assistance.operit.terminal.R.string.ssh_reverse_mount_desc),
+                                        text = stringResource(com.ai.assistance.operit.terminal.R.string.ssh_reverse_mount_desc),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = SettingsTheme.onSurfaceVariant,
                                         fontSize = 11.sp
@@ -405,7 +406,7 @@ fun SettingsScreen(
                     
                     if (sshConfig == null) {
                         Text(
-                            text = context.getString(com.ai.assistance.operit.terminal.R.string.ssh_config_required),
+                            text = stringResource(com.ai.assistance.operit.terminal.R.string.ssh_config_required),
                             style = MaterialTheme.typography.bodySmall,
                             color = SettingsTheme.onSurfaceColor.copy(alpha = 0.6f),
                             modifier = Modifier.padding(bottom = 8.dp)
@@ -445,7 +446,7 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = context.getString(com.ai.assistance.operit.terminal.R.string.shared_tmp_title),
+                                text = stringResource(com.ai.assistance.operit.terminal.R.string.shared_tmp_title),
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = SettingsTheme.onSurfaceColor
@@ -453,9 +454,9 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = if (sharedTmpEnabled) {
-                                    context.getString(com.ai.assistance.operit.terminal.R.string.shared_tmp_enabled_desc)
+                                    stringResource(com.ai.assistance.operit.terminal.R.string.shared_tmp_enabled_desc)
                                 } else {
-                                    context.getString(com.ai.assistance.operit.terminal.R.string.shared_tmp_disabled_desc)
+                                    stringResource(com.ai.assistance.operit.terminal.R.string.shared_tmp_disabled_desc)
                                 },
                                 fontSize = 14.sp,
                                 color = SettingsTheme.onSurfaceVariant
@@ -475,7 +476,7 @@ fun SettingsScreen(
                     
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.shared_tmp_note),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.shared_tmp_note),
                         fontSize = 12.sp,
                         color = SettingsTheme.onSurfaceVariant.copy(alpha = 0.8f),
                         lineHeight = 16.sp
@@ -497,7 +498,7 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = context.getString(com.ai.assistance.operit.terminal.R.string.chroot_mode_title),
+                                text = stringResource(com.ai.assistance.operit.terminal.R.string.chroot_mode_title),
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = SettingsTheme.onSurfaceColor
@@ -505,9 +506,9 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = if (chrootEnabled) {
-                                    context.getString(com.ai.assistance.operit.terminal.R.string.chroot_mode_enabled_desc)
+                                    stringResource(com.ai.assistance.operit.terminal.R.string.chroot_mode_enabled_desc)
                                 } else {
-                                    context.getString(com.ai.assistance.operit.terminal.R.string.chroot_mode_disabled_desc)
+                                    stringResource(com.ai.assistance.operit.terminal.R.string.chroot_mode_disabled_desc)
                                 },
                                 fontSize = 14.sp,
                                 color = SettingsTheme.onSurfaceVariant
@@ -527,7 +528,7 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.chroot_mode_note),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.chroot_mode_note),
                         fontSize = 12.sp,
                         color = SettingsTheme.onSurfaceVariant.copy(alpha = 0.8f),
                         lineHeight = 16.sp
@@ -564,7 +565,7 @@ fun SettingsScreen(
                                     Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                 }
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text(context.getString(com.ai.assistance.operit.terminal.R.string.chroot_mount_check))
+                                Text(stringResource(com.ai.assistance.operit.terminal.R.string.chroot_mount_check))
                             }
 
                             Button(
@@ -583,14 +584,14 @@ fun SettingsScreen(
                                     Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
                                 }
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text(context.getString(com.ai.assistance.operit.terminal.R.string.chroot_mount_unmount))
+                                Text(stringResource(com.ai.assistance.operit.terminal.R.string.chroot_mount_unmount))
                             }
                         }
 
                         if (chrootMountDetails.isNotBlank()) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = context.getString(com.ai.assistance.operit.terminal.R.string.chroot_mount_details_title),
+                                text = stringResource(com.ai.assistance.operit.terminal.R.string.chroot_mount_details_title),
                                 fontSize = 12.sp,
                                 color = SettingsTheme.onSurfaceVariant
                             )
@@ -617,14 +618,14 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.virtual_keyboard_settings_title),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.virtual_keyboard_settings_title),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = SettingsTheme.onSurfaceColor
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     SettingsItem(
-                        title = context.getString(com.ai.assistance.operit.terminal.R.string.virtual_keyboard_custom_title),
+                        title = stringResource(com.ai.assistance.operit.terminal.R.string.virtual_keyboard_custom_title),
                         subtitle = virtualKeyboardSummary,
                         onClick = { showVirtualKeyboardDialog = true },
                         icon = Icons.Default.TextFields
@@ -641,7 +642,7 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.font_settings_title),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.font_settings_title),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = SettingsTheme.onSurfaceColor
@@ -650,7 +651,7 @@ fun SettingsScreen(
                     
                     // 字体大小设置
                     SettingsItem(
-                        title = context.getString(com.ai.assistance.operit.terminal.R.string.font_size_title),
+                        title = stringResource(com.ai.assistance.operit.terminal.R.string.font_size_title),
                         subtitle = "${fontSize.toInt()}sp",
                         onClick = { showFontSizeDialog = true },
                         icon = Icons.Default.TextFields
@@ -659,7 +660,7 @@ fun SettingsScreen(
 
                     // 渲染帧率设置
                     SettingsItem(
-                        title = context.getString(com.ai.assistance.operit.terminal.R.string.target_fps_title),
+                        title = stringResource(com.ai.assistance.operit.terminal.R.string.target_fps_title),
                         subtitle = "${targetFps} FPS",
                         onClick = { showTargetFpsDialog = true },
                         icon = Icons.Default.TextFields
@@ -668,8 +669,8 @@ fun SettingsScreen(
                     
                     // 字体路径设置
                     SettingsItem(
-                        title = context.getString(com.ai.assistance.operit.terminal.R.string.font_path_title),
-                        subtitle = fontPath.ifEmpty { context.getString(com.ai.assistance.operit.terminal.R.string.font_not_set) },
+                        title = stringResource(com.ai.assistance.operit.terminal.R.string.font_path_title),
+                        subtitle = fontPath.ifEmpty { stringResource(com.ai.assistance.operit.terminal.R.string.font_not_set) },
                         onClick = { showFontPathDialog = true },
                         icon = Icons.Default.Folder
                     )
@@ -677,8 +678,8 @@ fun SettingsScreen(
                     
                     // 系统字体名称设置
                     SettingsItem(
-                        title = context.getString(com.ai.assistance.operit.terminal.R.string.font_name_title),
-                        subtitle = fontName.ifEmpty { context.getString(com.ai.assistance.operit.terminal.R.string.font_not_set) },
+                        title = stringResource(com.ai.assistance.operit.terminal.R.string.font_name_title),
+                        subtitle = fontName.ifEmpty { stringResource(com.ai.assistance.operit.terminal.R.string.font_not_set) },
                         onClick = { showFontNameDialog = true },
                         icon = Icons.Default.TextFields
                     )
@@ -700,7 +701,7 @@ fun SettingsScreen(
                         ),
                         border = androidx.compose.foundation.BorderStroke(1.dp, SettingsTheme.primaryColor)
                     ) {
-                        Text(context.getString(com.ai.assistance.operit.terminal.R.string.font_reset_default))
+                        Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_reset_default))
                     }
                 }
             }
@@ -714,7 +715,7 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.source_management_title),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.source_management_title),
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = SettingsTheme.onSurfaceColor
@@ -724,7 +725,7 @@ fun SettingsScreen(
                     sourceConfigs.forEach { (pm, config) ->
                         SettingsItem(
                             title = pm.displayName,
-                            subtitle = context.getString(com.ai.assistance.operit.terminal.R.string.source_current, config.sources.find { it.id == config.selectedSourceId }?.name ?: "N/A"),
+                            subtitle = stringResource(com.ai.assistance.operit.terminal.R.string.source_current, config.sources.find { it.id == config.selectedSourceId }?.name ?: "N/A"),
                             onClick = { showSourceDialogFor = pm },
                             icon = Icons.Default.Source
                         )
@@ -741,14 +742,14 @@ fun SettingsScreen(
             onDismissRequest = { viewModel.onSshToolsMissingDialogDismissed() },
             title = { 
                 Text(
-                    text = context.getString(com.ai.assistance.operit.terminal.R.string.ssh_tools_missing_title), 
+                    text = stringResource(com.ai.assistance.operit.terminal.R.string.ssh_tools_missing_title),
                     color = SettingsTheme.onSurfaceColor, 
                     fontWeight = FontWeight.Bold
                 ) 
             },
             text = { 
                 Text(
-                    text = context.getString(com.ai.assistance.operit.terminal.R.string.ssh_tools_missing_message), 
+                    text = stringResource(com.ai.assistance.operit.terminal.R.string.ssh_tools_missing_message),
                     color = SettingsTheme.onSurfaceColor
                 ) 
             },
@@ -760,14 +761,14 @@ fun SettingsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.go_to_setup))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.go_to_setup))
                 }
             },
             dismissButton = {
                 OutlinedButton(
                     onClick = { viewModel.onSshToolsMissingDialogDismissed() }
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.dialog_cancel))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.dialog_cancel))
                 }
             },
             containerColor = SettingsTheme.surfaceColor
@@ -779,7 +780,7 @@ fun SettingsScreen(
             onDismissRequest = { viewModel.onOpensshMissingDialogDismissed() },
             title = { 
                 Text(
-                    text = context.getString(com.ai.assistance.operit.terminal.R.string.openssh_missing_title), 
+                    text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_missing_title),
                     color = SettingsTheme.onSurfaceColor, 
                     fontWeight = FontWeight.Bold
                 ) 
@@ -787,40 +788,40 @@ fun SettingsScreen(
             text = { 
                 Column {
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.openssh_missing_desc), 
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_missing_desc),
                         color = SettingsTheme.onSurfaceColor,
                         fontWeight = FontWeight.Medium
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.openssh_local_component),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_local_component),
                         color = SettingsTheme.primaryColor,
                         fontSize = 14.sp
                     )
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.openssh_go_to_install),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_go_to_install),
                         color = SettingsTheme.onSurfaceVariant,
                         fontSize = 12.sp
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.openssh_remote_component),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_remote_component),
                         color = SettingsTheme.primaryColor,
                         fontSize = 14.sp
                     )
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.openssh_remote_install),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_remote_install),
                         color = SettingsTheme.onSurfaceVariant,
                         fontSize = 12.sp
                     )
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.openssh_install_ubuntu_cmd),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_install_ubuntu_cmd),
                         color = SettingsTheme.onSurfaceVariant,
                         fontSize = 11.sp,
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                     )
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.openssh_install_centos_cmd),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_install_centos_cmd),
                         color = SettingsTheme.onSurfaceVariant,
                         fontSize = 11.sp,
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
@@ -835,14 +836,14 @@ fun SettingsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.openssh_install_button))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.openssh_install_button))
                 }
             },
             dismissButton = {
                 OutlinedButton(
                     onClick = { viewModel.onOpensshMissingDialogDismissed() }
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.cancel))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.cancel))
                 }
             },
             containerColor = SettingsTheme.surfaceColor
@@ -855,13 +856,13 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { showFontSizeDialog = false },
             title = { 
-                Text(context.getString(com.ai.assistance.operit.terminal.R.string.font_size_dialog_title), color = SettingsTheme.onSurfaceColor, fontWeight = FontWeight.Bold) 
+                Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_size_dialog_title), color = SettingsTheme.onSurfaceColor, fontWeight = FontWeight.Bold)
             },
             text = { 
                 OutlinedTextField(
                     value = fontSizeInput,
                     onValueChange = { fontSizeInput = it },
-                    label = { Text(context.getString(com.ai.assistance.operit.terminal.R.string.font_size_label), color = SettingsTheme.onSurfaceVariant) },
+                    label = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_size_label), color = SettingsTheme.onSurfaceVariant) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = SettingsTheme.onSurfaceColor,
@@ -885,14 +886,14 @@ fun SettingsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.confirm))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.confirm))
                 }
             },
             dismissButton = {
                 OutlinedButton(
                     onClick = { showFontSizeDialog = false }
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.cancel))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.cancel))
                 }
             },
             containerColor = SettingsTheme.surfaceColor
@@ -906,7 +907,7 @@ fun SettingsScreen(
             onDismissRequest = { showTargetFpsDialog = false },
             title = {
                 Text(
-                    context.getString(com.ai.assistance.operit.terminal.R.string.target_fps_dialog_title),
+                    stringResource(com.ai.assistance.operit.terminal.R.string.target_fps_dialog_title),
                     color = SettingsTheme.onSurfaceColor,
                     fontWeight = FontWeight.Bold
                 )
@@ -918,7 +919,7 @@ fun SettingsScreen(
                         onValueChange = { targetFpsInput = it },
                         label = {
                             Text(
-                                context.getString(com.ai.assistance.operit.terminal.R.string.target_fps_label),
+                                stringResource(com.ai.assistance.operit.terminal.R.string.target_fps_label),
                                 color = SettingsTheme.onSurfaceVariant
                             )
                         },
@@ -932,7 +933,7 @@ fun SettingsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.target_fps_hint),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.target_fps_hint),
                         color = SettingsTheme.onSurfaceVariant,
                         fontSize = 12.sp
                     )
@@ -952,14 +953,14 @@ fun SettingsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.confirm))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.confirm))
                 }
             },
             dismissButton = {
                 OutlinedButton(
                     onClick = { showTargetFpsDialog = false }
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.cancel))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.cancel))
                 }
             },
             containerColor = SettingsTheme.surfaceColor
@@ -972,14 +973,14 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { showFontPathDialog = false },
             title = { 
-                Text(context.getString(com.ai.assistance.operit.terminal.R.string.font_path_dialog_title), color = SettingsTheme.onSurfaceColor, fontWeight = FontWeight.Bold) 
+                Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_path_dialog_title), color = SettingsTheme.onSurfaceColor, fontWeight = FontWeight.Bold)
             },
             text = { 
                 Column {
                     OutlinedTextField(
                         value = fontPathInput,
                         onValueChange = { fontPathInput = it },
-                        label = { Text(context.getString(com.ai.assistance.operit.terminal.R.string.font_path_label), color = SettingsTheme.onSurfaceVariant) },
+                        label = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_path_label), color = SettingsTheme.onSurfaceVariant) },
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = SettingsTheme.onSurfaceColor,
@@ -990,7 +991,7 @@ fun SettingsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.font_path_hint),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.font_path_hint),
                         color = SettingsTheme.onSurfaceVariant,
                         fontSize = 12.sp
                     )
@@ -1005,14 +1006,14 @@ fun SettingsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.confirm))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.confirm))
                 }
             },
             dismissButton = {
                 OutlinedButton(
                     onClick = { showFontPathDialog = false }
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.cancel))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.cancel))
                 }
             },
             containerColor = SettingsTheme.surfaceColor
@@ -1025,16 +1026,16 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { showFontNameDialog = false },
             title = { 
-                Text(context.getString(com.ai.assistance.operit.terminal.R.string.font_name_dialog_title), color = SettingsTheme.onSurfaceColor, fontWeight = FontWeight.Bold) 
+                Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_name_dialog_title), color = SettingsTheme.onSurfaceColor, fontWeight = FontWeight.Bold)
             },
             text = { 
                 Column {
                     OutlinedTextField(
                         value = fontNameInput,
                         onValueChange = { fontNameInput = it },
-                        label = { Text(context.getString(com.ai.assistance.operit.terminal.R.string.font_name_label), color = SettingsTheme.onSurfaceVariant) },
+                        label = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_name_label), color = SettingsTheme.onSurfaceVariant) },
                         modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text(context.getString(com.ai.assistance.operit.terminal.R.string.font_name_placeholder), color = SettingsTheme.onSurfaceVariant.copy(alpha = 0.5f)) },
+                        placeholder = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_name_placeholder), color = SettingsTheme.onSurfaceVariant.copy(alpha = 0.5f)) },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = SettingsTheme.onSurfaceColor,
                             unfocusedTextColor = SettingsTheme.onSurfaceColor,
@@ -1044,7 +1045,7 @@ fun SettingsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = context.getString(com.ai.assistance.operit.terminal.R.string.font_name_hint),
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.font_name_hint),
                         color = SettingsTheme.onSurfaceVariant,
                         fontSize = 12.sp
                     )
@@ -1059,14 +1060,14 @@ fun SettingsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.confirm))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.confirm))
                 }
             },
             dismissButton = {
                 OutlinedButton(
                     onClick = { showFontNameDialog = false }
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.cancel))
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.cancel))
                 }
             },
             containerColor = SettingsTheme.surfaceColor
@@ -1077,27 +1078,27 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { showClearCacheDialog = false },
             title = { 
-                Text(context.getString(com.ai.assistance.operit.terminal.R.string.reset_dialog_title), color = SettingsTheme.errorColor, fontWeight = FontWeight.Bold) 
+                Text(stringResource(com.ai.assistance.operit.terminal.R.string.reset_dialog_title), color = SettingsTheme.errorColor, fontWeight = FontWeight.Bold)
             },
             text = { 
                 Column {
                     Text(
-                        context.getString(com.ai.assistance.operit.terminal.R.string.reset_dialog_description),
+                        stringResource(com.ai.assistance.operit.terminal.R.string.reset_dialog_description),
                         color = SettingsTheme.onSurfaceColor,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.reset_dialog_item1), color = SettingsTheme.onSurfaceColor)
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.reset_dialog_item2), color = SettingsTheme.onSurfaceColor) 
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.reset_dialog_item3), color = SettingsTheme.onSurfaceColor)
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.reset_dialog_item1), color = SettingsTheme.onSurfaceColor)
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.reset_dialog_item2), color = SettingsTheme.onSurfaceColor)
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.reset_dialog_item3), color = SettingsTheme.onSurfaceColor)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        context.getString(com.ai.assistance.operit.terminal.R.string.reset_dialog_warning),
+                        stringResource(com.ai.assistance.operit.terminal.R.string.reset_dialog_warning),
                         color = SettingsTheme.errorColor
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        context.getString(com.ai.assistance.operit.terminal.R.string.reset_dialog_ftp_warning),
+                        stringResource(com.ai.assistance.operit.terminal.R.string.reset_dialog_ftp_warning),
                         color = SettingsTheme.errorColor,
                         fontWeight = FontWeight.Bold
                     )
@@ -1111,7 +1112,7 @@ fun SettingsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.errorColor)
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.reset_confirm), color = SettingsTheme.onSurfaceColor)
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.reset_confirm), color = SettingsTheme.onSurfaceColor)
                 }
             },
             dismissButton = {
@@ -1122,7 +1123,7 @@ fun SettingsScreen(
                     ),
                     border = androidx.compose.foundation.BorderStroke(1.dp, SettingsTheme.onSurfaceVariant)
                 ) {
-                    Text(context.getString(com.ai.assistance.operit.terminal.R.string.dialog_cancel), color = SettingsTheme.onSurfaceVariant)
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.dialog_cancel), color = SettingsTheme.onSurfaceVariant)
                 }
             },
             containerColor = SettingsTheme.surfaceColor

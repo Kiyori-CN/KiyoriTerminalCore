@@ -123,7 +123,7 @@
     <string name="settings">设置</string>
     
     <!-- Additional new strings -->
-    <string name="initializing">正在初始化...</string>
+    <string name="initializing">正在初始化…</string>
     <string name="ftp_server_running_info">FTP服务器正在运行\n地址: %1$s:%2$s\n用户名: %3$s\n密码: %4$s\n根目录: Ubuntu文件系统</string>
     <string name="unknown_session">未知会话</string>
     
@@ -131,7 +131,7 @@
     <string name="ssh_tools_missing_title">SSH 工具未安装</string>
     <string name="ssh_tools_missing_message">启用 SSH 连接需要安装以下工具：\n\n• ssh - SSH 客户端\n• sshpass - SSH 密码认证工具\n\n请前往"环境配置"页面安装 SSH 工具。</string>
     <string name="go_to_setup">前往配置</string>
-    <string name="checking_ssh_tools">正在检查 SSH 工具...</string>
+    <string name="checking_ssh_tools">正在检查 SSH 工具…</string>
     
     <!-- Shared TMP Settings -->
     <string name="shared_tmp_title">共享临时目录</string>
@@ -149,8 +149,12 @@
     <string name="chroot_mount_status_checking">正在检测 chroot 挂载…</string>
     <string name="chroot_mount_status_unmounting">正在解挂载 chroot 挂载…</string>
     <string name="chroot_mount_status_none">当前未检测到 chroot 硬挂载</string>
-    <string name="chroot_mount_status_detected">当前检测到 %1$d 个 chroot 硬挂载</string>
-    <string name="chroot_mount_status_unmounted">已解挂载 %1$d 个 chroot 硬挂载</string>
+    <plurals name="chroot_mount_status_detected">
+        <item quantity="other">当前检测到 %1$d 个 chroot 硬挂载</item>
+    </plurals>
+    <plurals name="chroot_mount_status_unmounted">
+        <item quantity="other">已解挂载 %1$d 个 chroot 硬挂载</item>
+    </plurals>
     <string name="chroot_mount_status_failed">挂载操作失败：%1$s</string>
     <string name="chroot_mount_details_title">当前挂载点：</string>
 
@@ -183,7 +187,7 @@
     <string name="font_size_label">字体大小 (sp)</string>
     <string name="target_fps_dialog_title">设置渲染帧率</string>
     <string name="target_fps_label">目标帧率 (FPS)</string>
-    <string name="target_fps_hint">范围：15-120，建议 30-60。数值越高越流畅，但功耗更高。</string>
+    <string name="target_fps_hint">范围：15–120，建议 30–60。数值越高越流畅，但功耗更高。</string>
     <string name="font_path_dialog_title">设置字体文件路径</string>
     <string name="font_path_label">字体文件路径</string>
     <string name="font_path_hint">留空则使用默认字体</string>

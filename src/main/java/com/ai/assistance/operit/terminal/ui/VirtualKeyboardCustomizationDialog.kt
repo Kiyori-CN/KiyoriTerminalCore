@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,7 +58,7 @@ fun VirtualKeyboardCustomizationDialog(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = context.getString(R.string.virtual_keyboard_dialog_title),
+                    text = stringResource(R.string.virtual_keyboard_dialog_title),
                     color = SettingsTheme.onSurfaceColor,
                     fontWeight = FontWeight.Bold
                 )
@@ -66,7 +67,7 @@ fun VirtualKeyboardCustomizationDialog(
                         draftButtons = VirtualKeyboardConfigManager.defaultLayout().rows.flatten()
                     }
                 ) {
-                    Text(context.getString(R.string.virtual_keyboard_reset_default), color = SettingsTheme.primaryColor)
+                    Text(stringResource(R.string.virtual_keyboard_reset_default), color = SettingsTheme.primaryColor)
                 }
             }
         },
@@ -78,7 +79,7 @@ fun VirtualKeyboardCustomizationDialog(
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    text = context.getString(R.string.virtual_keyboard_value_hint),
+                    text = stringResource(R.string.virtual_keyboard_value_hint),
                     color = SettingsTheme.onSurfaceVariant,
                     fontSize = 12.sp
                 )
@@ -86,9 +87,9 @@ fun VirtualKeyboardCustomizationDialog(
 
                 repeat(VirtualKeyboardLayoutConfig.ROW_COUNT) { rowIndex ->
                     val rowTitle = if (rowIndex == 0) {
-                        context.getString(R.string.virtual_keyboard_row_one)
+                        stringResource(R.string.virtual_keyboard_row_one)
                     } else {
-                        context.getString(R.string.virtual_keyboard_row_two)
+                        stringResource(R.string.virtual_keyboard_row_two)
                     }
 
                     Text(
@@ -136,12 +137,12 @@ fun VirtualKeyboardCustomizationDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
             ) {
-                Text(context.getString(R.string.confirm))
+                Text(stringResource(R.string.confirm))
             }
         },
         dismissButton = {
             OutlinedButton(onClick = onDismiss) {
-                Text(context.getString(R.string.cancel))
+                Text(stringResource(R.string.cancel))
             }
         },
         containerColor = SettingsTheme.surfaceColor
@@ -174,7 +175,7 @@ private fun VirtualKeyboardKeyEditor(
                 value = keyConfig.label,
                 onValueChange = onLabelChange,
                 modifier = Modifier.weight(1f),
-                label = { Text(context.getString(R.string.virtual_keyboard_key_label)) },
+                label = { Text(stringResource(R.string.virtual_keyboard_key_label)) },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = SettingsTheme.onSurfaceColor,
@@ -199,7 +200,7 @@ private fun VirtualKeyboardKeyEditor(
             onValueChange = onValueChange,
             enabled = keyConfig.action == VirtualKeyAction.SEND_TEXT,
             modifier = Modifier.fillMaxWidth(),
-            label = { Text(context.getString(R.string.virtual_keyboard_key_value)) },
+            label = { Text(stringResource(R.string.virtual_keyboard_key_value)) },
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = SettingsTheme.onSurfaceColor,

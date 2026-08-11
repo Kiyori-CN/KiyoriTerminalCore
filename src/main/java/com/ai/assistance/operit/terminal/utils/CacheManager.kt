@@ -36,7 +36,6 @@ class CacheManager(private val context: Context) {
     private val binDir: File = File(filesDir, "bin")
 
     private val forbiddenDeleteRoots: List<Path> = listOf(
-        Paths.get("/sdcard"),
         Paths.get("/storage"),
         Paths.get("/mnt")
     )

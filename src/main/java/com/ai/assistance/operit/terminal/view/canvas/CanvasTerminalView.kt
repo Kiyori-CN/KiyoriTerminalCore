@@ -4,7 +4,6 @@ package com.ai.assistance.operit.terminal.view.canvas
  import android.content.ClipboardManager
  import android.content.Context
  import android.graphics.*
- import android.os.Build
  import android.os.Handler
  import android.os.Looper
  import android.util.AttributeSet
@@ -26,6 +25,10 @@ import android.view.accessibility.AccessibilityManager
  import android.view.inputmethod.InputConnection
  import android.view.inputmethod.InputMethodManager
  import android.widget.OverScroller
+ import androidx.core.graphics.toColorInt
+ import androidx.core.graphics.withClip
+ import androidx.core.graphics.withSave
+ import androidx.core.graphics.withTranslation
  import com.ai.assistance.operit.terminal.R
  import com.ai.assistance.operit.terminal.view.domain.ansi.AnsiTerminalEmulator
  import com.ai.assistance.operit.terminal.view.domain.ansi.TerminalChar
@@ -78,7 +81,7 @@ class CanvasTerminalView @JvmOverloads constructor(
     }
 
     private val selectionHandlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#3B82F6")
+        color = "#3B82F6".toColorInt()
         style = Paint.Style.FILL
     }
 
@@ -257,76 +260,76 @@ class CanvasTerminalView @JvmOverloads constructor(
         val startRow = (row - contextRows).coerceAtLeast(0)
         val endRow = (row + contextRows).coerceAtMost(fullContent.size - 1)
 
-        canvas.save()
-        val clipPath = Path().apply {
-            addRoundRect(
-                inner,
-                corner * 0.8f,
-                corner * 0.8f,
-                Path.Direction.CW
-            )
-        }
-        canvas.clipPath(clipPath)
-        canvas.translate(drawLeft, drawTop)
-        canvas.scale(scale, scale)
-
-        var localRowIndex = 0
-        for (rr in startRow..endRow) {
-            val srcLine = fullContent.getOrNull(rr) ?: emptyArray()
-            val line = Array(cols) { i ->
-                val srcCol = col - contextCols + i
-                if (srcCol in srcLine.indices) srcLine[srcCol] else TerminalChar()
+        canvas.withSave {
+            val clipPath = Path().apply {
+                addRoundRect(
+                    inner,
+                    corner * 0.8f,
+                    corner * 0.8f,
+                    Path.Direction.CW
+                )
             }
-            drawLine(canvas, line, localRowIndex, 0f, localRowIndex * charHeight, charWidth, charHeight, baseline)
-            localRowIndex++
-        }
+            clipPath(clipPath)
+            translate(drawLeft, drawTop)
+            scale(scale, scale)
 
-        val centerLeft = contextCols * charWidth
-        val centerTop = contextRows * charHeight
-        val focusLine = fullContent.getOrNull(row) ?: emptyArray()
-        val safeCol = if (focusLine.isNotEmpty()) col.coerceIn(0, focusLine.size - 1) else 0
-        val cellWidth = if (focusLine.isNotEmpty()) {
-            textMetrics.getCellWidth(focusLine[safeCol].char).toFloat()
-        } else {
-            1f
-        }
-        val cellLeft = if (focusLine.isNotEmpty()) {
-            getXOffsetForCol(focusLine, safeCol, charWidth)
-        } else {
-            0f
-        }
-        val cellRight = cellLeft + charWidth * cellWidth
-        val useRightEdge = when (activeDragHandle) {
-            DragHandle.START -> false
-            DragHandle.END -> true
-            else -> lastSelectionTouchX >= (cellLeft + cellRight) / 2f
-        }
-        val pointerOffset = if (useRightEdge) charWidth * cellWidth else 0f
-        val pointerX = (centerLeft + pointerOffset).coerceIn(0f, cols * charWidth)
-        val pointerTop = centerTop + charHeight * 0.12f
-        val pointerBottom = centerTop + charHeight * 0.88f
-        val pointerWidth = max(2f, charWidth * 0.08f)
-        canvas.drawRect(
-            pointerX - pointerWidth / 2f,
-            pointerTop,
-            pointerX + pointerWidth / 2f,
-            pointerBottom,
-            magnifierPointerPaint
-        )
+            var localRowIndex = 0
+            for (rr in startRow..endRow) {
+                val srcLine = fullContent.getOrNull(rr) ?: emptyArray()
+                val line = Array(cols) { i ->
+                    val srcCol = col - contextCols + i
+                    if (srcCol in srcLine.indices) srcLine[srcCol] else TerminalChar()
+                }
+                drawLine(this, line, localRowIndex, 0f, localRowIndex * charHeight, charWidth, charHeight, baseline)
+                localRowIndex++
+            }
 
-        val tipHeight = charHeight * 0.2f
-        val tipWidth = charWidth * 0.45f
-        val tipBaseY = pointerBottom
-        val tipY = min(rows * charHeight - 1f, tipBaseY + tipHeight)
-        val tipPath = Path().apply {
-            moveTo(pointerX, tipY)
-            lineTo(pointerX - tipWidth / 2f, tipBaseY)
-            lineTo(pointerX + tipWidth / 2f, tipBaseY)
-            close()
-        }
-        canvas.drawPath(tipPath, magnifierPointerPaint)
+            val centerLeft = contextCols * charWidth
+            val centerTop = contextRows * charHeight
+            val focusLine = fullContent.getOrNull(row) ?: emptyArray()
+            val safeCol = if (focusLine.isNotEmpty()) col.coerceIn(0, focusLine.size - 1) else 0
+            val cellWidth = if (focusLine.isNotEmpty()) {
+                textMetrics.getCellWidth(focusLine[safeCol].char).toFloat()
+            } else {
+                1f
+            }
+            val cellLeft = if (focusLine.isNotEmpty()) {
+                getXOffsetForCol(focusLine, safeCol, charWidth)
+            } else {
+                0f
+            }
+            val cellRight = cellLeft + charWidth * cellWidth
+            val useRightEdge = when (activeDragHandle) {
+                DragHandle.START -> false
+                DragHandle.END -> true
+                else -> lastSelectionTouchX >= (cellLeft + cellRight) / 2f
+            }
+            val pointerOffset = if (useRightEdge) charWidth * cellWidth else 0f
+            val pointerX = (centerLeft + pointerOffset).coerceIn(0f, cols * charWidth)
+            val pointerTop = centerTop + charHeight * 0.12f
+            val pointerBottom = centerTop + charHeight * 0.88f
+            val pointerWidth = max(2f, charWidth * 0.08f)
+            drawRect(
+                pointerX - pointerWidth / 2f,
+                pointerTop,
+                pointerX + pointerWidth / 2f,
+                pointerBottom,
+                magnifierPointerPaint
+            )
 
-        canvas.restore()
+            val tipHeight = charHeight * 0.2f
+            val tipWidth = charWidth * 0.45f
+            val tipBaseY = pointerBottom
+            val tipY = min(rows * charHeight - 1f, tipBaseY + tipHeight)
+            val tipPath = Path().apply {
+                moveTo(pointerX, tipY)
+                lineTo(pointerX - tipWidth / 2f, tipBaseY)
+                lineTo(pointerX + tipWidth / 2f, tipBaseY)
+                close()
+            }
+            drawPath(tipPath, magnifierPointerPaint)
+
+        }
     }
 
     private fun updateAutoScrollForSelectionDrag() {
@@ -1492,9 +1495,7 @@ class CanvasTerminalView @JvmOverloads constructor(
         }
         val nextTabNodes = ArrayList<TabHitNode>(tabs.size)
 
-        canvas.save()
-        canvas.clipRect(tabsLeft, rowTop, tabsRight, rowBottom)
-        try {
+        canvas.withClip(tabsLeft, rowTop, tabsRight, rowBottom) {
             var cursorX = tabsLeft - tabScrollOffsetX
             tabs.forEach { tab ->
                 val tabWidth = measureTabWidth(tab)
@@ -1531,7 +1532,7 @@ class CanvasTerminalView @JvmOverloads constructor(
                             touchTarget.tabId == tab.id &&
                             (closeRect?.contains(tabTouchX, tabTouchY) == true)
                     drawTabNode(
-                        canvas = canvas,
+                        canvas = this,
                         tab = tab,
                         tabRect = tabRect,
                         closeRect = closeRect,
@@ -1542,8 +1543,6 @@ class CanvasTerminalView @JvmOverloads constructor(
                 }
                 cursorX += tabWidth + tabSpacingPx
             }
-        } finally {
-            canvas.restore()
         }
         tabHitSnapshot = TabHitSnapshot(
             nodes = nextTabNodes.toList(),
@@ -1808,9 +1807,7 @@ class CanvasTerminalView @JvmOverloads constructor(
         val contentTop = getTerminalContentTop()
         val viewportHeight = getTerminalViewportHeight(canvas.height.toFloat())
         val contentBottom = getTerminalViewportBottom(canvas.height.toFloat())
-        canvas.save()
-        canvas.clipRect(0f, 0f, viewportWidth, canvas.height.toFloat())
-        try {
+        canvas.withClip(0f, 0f, viewportWidth, canvas.height.toFloat()) {
             // 1. 先全屏清屏，防止前帧残留
             bgPaint.color = config.backgroundColor
             canvas.drawRect(0f, 0f, viewportWidth, canvas.height.toFloat(), bgPaint)
@@ -1821,9 +1818,7 @@ class CanvasTerminalView @JvmOverloads constructor(
                 return
             }
 
-            canvas.save()
-            canvas.clipRect(0f, contentTop, viewportWidth, contentBottom)
-            try {
+            canvas.withClip(0f, contentTop, viewportWidth, contentBottom) {
                 // 处理惯性滚动动画
                 if (scroller.computeScrollOffset()) {
                     val newScrollY = clampScrollOffset(scroller.currY.toFloat())
@@ -1868,9 +1863,7 @@ class CanvasTerminalView @JvmOverloads constructor(
                 val startRow = (scrollOffsetY / charHeight).toInt().coerceAtLeast(0)
                 val endRow = min(startRow + visibleRows, fullContent.size)
 
-                canvas.save()
-                canvas.translate(0f, -getTerminalVisualOffsetY().toFloat())
-                try {
+                canvas.withTranslation(0f, -getTerminalVisualOffsetY().toFloat()) {
                     // 绘制每一行（包括背景）
                     for (row in startRow until endRow) {
                         if (row >= fullContent.size) break
@@ -1885,12 +1878,12 @@ class CanvasTerminalView @JvmOverloads constructor(
                         }
 
                         // 绘制该行的所有字符
-                        drawLine(canvas, line, row, 0f, y, charWidth, charHeight, baseline)
+                        drawLine(this, line, row, 0f, y, charWidth, charHeight, baseline)
                     }
 
                     // 绘制选择区域
                     if (selectionManager.hasSelection()) {
-                        drawSelection(canvas, charWidth, charHeight)
+                        drawSelection(this, charWidth, charHeight)
                     }
 
                     // 绘制光标（光标只在可见屏幕部分显示，需要考虑历史缓冲区偏移）
@@ -1926,7 +1919,7 @@ class CanvasTerminalView @JvmOverloads constructor(
                                 if (bottom > top) {
                                     cursorPaint.color = Color.GREEN
                                     cursorPaint.alpha = 180
-                                    canvas.drawRect(
+                                    drawRect(
                                         cursorX,
                                         top,
                                         cursorX + cursorCharWidth,
@@ -1937,8 +1930,6 @@ class CanvasTerminalView @JvmOverloads constructor(
                             }
                         }
                     }
-                } finally {
-                    canvas.restore()
                 }
 
                 if (selectionManager.hasSelection()) {
@@ -1947,11 +1938,7 @@ class CanvasTerminalView @JvmOverloads constructor(
                         drawSelectionMagnifier(canvas)
                     }
                 }
-            } finally {
-                canvas.restore()
             }
-        } finally {
-            canvas.restore()
         }
     }
     
@@ -2511,11 +2498,7 @@ class CanvasTerminalView @JvmOverloads constructor(
             }
         }
 
-        actionMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            startActionMode(callback, ActionMode.TYPE_FLOATING)
-        } else {
-            startActionMode(callback)
-        }
+        actionMode = startActionMode(callback, ActionMode.TYPE_FLOATING)
     }
     
     /**

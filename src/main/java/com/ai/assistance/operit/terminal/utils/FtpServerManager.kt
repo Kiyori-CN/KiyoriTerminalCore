@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.terminal.utils
 
 import android.content.Context
+import android.content.res.Resources
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,7 +20,10 @@ import java.net.NetworkInterface
 import java.security.SecureRandom
 import java.util.*
 
-class FtpServerManager private constructor(private val context: Context) {
+class FtpServerManager private constructor(
+    private val filesDir: File,
+    private val resources: Resources
+) {
     
     companion object {
         private const val TAG = "FtpServerManager"
@@ -34,14 +38,17 @@ class FtpServerManager private constructor(private val context: Context) {
         
         fun getInstance(context: Context): FtpServerManager {
             return instance ?: synchronized(this) {
-                instance ?: FtpServerManager(context.applicationContext).also { instance = it }
+                val appContext = context.applicationContext
+                instance ?: FtpServerManager(
+                    filesDir = appContext.filesDir,
+                    resources = appContext.resources
+                ).also { instance = it }
             }
         }
     }
     
     private var ftpServer: FtpServer? = null
     private var activePassword: String? = null
-    private val filesDir = context.filesDir
     private val usrDir = File(filesDir, "usr")
     
     private fun getUbuntuRootPath(): String {
@@ -133,7 +140,7 @@ class FtpServerManager private constructor(private val context: Context) {
     fun getFtpServerInfo(): String {
         val password = activePassword
         return if (isFtpServerRunning() && password != null) {
-            context.getString(
+            resources.getString(
                 com.ai.assistance.operit.terminal.R.string.ftp_server_running_info,
                 getLocalIpAddress(),
                 FTP_PORT.toString(),
@@ -141,7 +148,7 @@ class FtpServerManager private constructor(private val context: Context) {
                 password
             )
         } else {
-            context.getString(com.ai.assistance.operit.terminal.R.string.ftp_server_not_running)
+            resources.getString(com.ai.assistance.operit.terminal.R.string.ftp_server_not_running)
         }
     }
     

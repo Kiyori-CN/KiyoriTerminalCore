@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.terminal.utils
 
 import android.content.Context
+import androidx.core.content.edit
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -36,7 +37,7 @@ data class VirtualKeyboardLayoutConfig(
     }
 }
 
-class VirtualKeyboardConfigManager private constructor(private val context: Context) {
+class VirtualKeyboardConfigManager private constructor(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun loadLayout(): VirtualKeyboardLayoutConfig {
@@ -45,11 +46,11 @@ class VirtualKeyboardConfigManager private constructor(private val context: Cont
     }
 
     fun saveLayout(layout: VirtualKeyboardLayoutConfig) {
-        prefs.edit().putString(PREF_KEY_VIRTUAL_KEYBOARD_LAYOUT, serializeLayout(layout)).apply()
+        prefs.edit {putString(PREF_KEY_VIRTUAL_KEYBOARD_LAYOUT, serializeLayout(layout))}
     }
 
     fun resetToDefault() {
-        prefs.edit().remove(PREF_KEY_VIRTUAL_KEYBOARD_LAYOUT).apply()
+        prefs.edit {remove(PREF_KEY_VIRTUAL_KEYBOARD_LAYOUT)}
     }
 
     private fun parseLayout(rawLayout: String): VirtualKeyboardLayoutConfig {

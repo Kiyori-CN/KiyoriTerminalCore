@@ -3,6 +3,7 @@ package com.ai.assistance.operit.terminal.utils
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Typeface
+import androidx.core.content.edit
 import com.ai.assistance.operit.terminal.view.canvas.RenderConfig
 import com.ai.assistance.operit.terminal.R
 import java.io.File
@@ -103,7 +104,7 @@ class TerminalFontConfigManager private constructor(context: Context) {
      * 设置字体大小
      */
     fun setFontSize(size: Float) {
-        prefs.edit().putFloat(KEY_FONT_SIZE, size).apply()
+        prefs.edit {putFloat(KEY_FONT_SIZE, size)}
     }
     
     /**
@@ -118,7 +119,7 @@ class TerminalFontConfigManager private constructor(context: Context) {
      * 设置字体文件路径
      */
     fun setFontPath(path: String?) {
-        prefs.edit().putString(KEY_FONT_PATH, path).apply()
+        prefs.edit {putString(KEY_FONT_PATH, path)}
     }
     
     /**
@@ -133,7 +134,7 @@ class TerminalFontConfigManager private constructor(context: Context) {
      * 设置系统字体名称（如 "monospace", "serif", "sans-serif"）
      */
     fun setFontName(name: String?) {
-        prefs.edit().putString(KEY_FONT_NAME, name).apply()
+        prefs.edit {putString(KEY_FONT_NAME, name)}
     }
 
     /**
@@ -148,21 +149,20 @@ class TerminalFontConfigManager private constructor(context: Context) {
      * 设置目标帧率
      */
     fun setTargetFps(fps: Int) {
-        prefs.edit()
-            .putInt(KEY_TARGET_FPS, fps.coerceIn(MIN_TARGET_FPS, MAX_TARGET_FPS))
-            .apply()
+        prefs.edit {
+                putInt(KEY_TARGET_FPS, fps.coerceIn(MIN_TARGET_FPS, MAX_TARGET_FPS))
+            }
     }
     
     /**
      * 清除所有字体设置，恢复默认
      */
     fun resetToDefault() {
-        prefs.edit()
-            .remove(KEY_FONT_SIZE)
-            .remove(KEY_FONT_PATH)
-            .remove(KEY_FONT_NAME)
-            .remove(KEY_TARGET_FPS)
-            .apply()
+        prefs.edit {
+                remove(KEY_FONT_SIZE)
+                .remove(KEY_FONT_PATH)
+                .remove(KEY_FONT_NAME)
+                .remove(KEY_TARGET_FPS)
+            }
     }
 }
-

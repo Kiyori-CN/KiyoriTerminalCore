@@ -217,10 +217,10 @@ dependencies {
     implementation(files(sanitizeMinaCore.flatMap { it.archiveFile }).builtBy(sanitizeMinaCore))
     
     // SSHD服务器依赖
-    implementation("org.apache.sshd:sshd-core:2.10.0") {
+    implementation(libs.sshd.core) {
         exclude(group = "org.bouncycastle", module = "bcprov-jdk15to18")
     }
-    implementation("org.apache.sshd:sshd-sftp:2.10.0") {
+    implementation(libs.sshd.sftp) {
         exclude(group = "org.bouncycastle", module = "bcprov-jdk15to18")
     }
     // BouncyCastle for SSHD on Android (avoids JMX issues)

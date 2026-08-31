@@ -10,6 +10,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.ai.assistance.operit.terminal.data.TerminalSessionData
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
 import android.util.Log
 import com.ai.assistance.operit.terminal.view.domain.ansi.AnsiTerminalEmulator
 
@@ -30,6 +33,7 @@ class TerminalEnv(
     val terminalEmulator by terminalEmulatorState
 
     var command by mutableStateOf("")
+    private var setupExecutionJob: Job? = null
 
     fun onCommandChange(newCommand: String) {
         command = newCommand
@@ -52,9 +56,49 @@ class TerminalEnv(
     }
 
     fun onSetup(commands: List<String>) {
-        val fullCommand = commands.joinToString(separator = " && ")
-        terminalManager.coroutineScope.launch {
-            terminalManager.sendCommand(fullCommand)
+        if (commands.isEmpty()) {
+            Log.w("TerminalEnv", "Ignoring empty environment setup request")
+            return
+        }
+        if (setupExecutionJob?.isActive == true) {
+            Log.w("TerminalEnv", "Ignoring duplicate environment setup request")
+            return
+        }
+
+        setupExecutionJob = terminalManager.coroutineScope.launch {
+            try {
+                val sessionId = withTimeoutOrNull(30_000L) {
+                    terminalManager.terminalState.first { state ->
+                        !state.currentSessionId.isNullOrBlank()
+                    }.currentSessionId
+                }
+                if (sessionId.isNullOrBlank()) {
+                    Log.e("TerminalEnv", "Cannot start environment setup without a target terminal session")
+                    return@launch
+                }
+
+                commands.forEachIndexed { index, setupCommand ->
+                    val event = terminalManager.executeCommandAndWait(
+                        sessionId = sessionId,
+                        command = setupCommand,
+                    )
+                    if (event == null) {
+                        Log.e("TerminalEnv", "Environment setup step ${index + 1} did not complete")
+                        return@launch
+                    }
+                    val exitCode = event.exitCode
+                    if (exitCode != 0) {
+                        Log.e(
+                            "TerminalEnv",
+                            "Environment setup step ${index + 1} failed with exit code $exitCode"
+                        )
+                        return@launch
+                    }
+                }
+                Log.i("TerminalEnv", "Environment setup completed in session $sessionId")
+            } finally {
+                setupExecutionJob = null
+            }
         }
     }
 
@@ -97,4 +141,4 @@ fun rememberTerminalEnv(terminalManager: TerminalManager, forceShowSetup: Boolea
             forceShowSetup = forceShowSetup
         )
     }
-} 
+}

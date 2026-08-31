@@ -5,6 +5,7 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CompletableDeferred
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -16,7 +17,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import com.ai.assistance.operit.terminal.data.TerminalState
 import com.ai.assistance.operit.terminal.data.CommandHistoryItem
 import com.ai.assistance.operit.terminal.data.QueuedCommand
@@ -252,7 +256,8 @@ class TerminalManager private constructor(
     }
 
     private fun writeInputToKernel(session: TerminalSessionData, input: String, source: String) {
-        val writer = session.sessionWriter ?: return
+        val writer = session.sessionWriter
+            ?: throw IllegalStateException("Terminal session ${session.id} is not writable")
         writer.write(input)
         writer.flush()
         Log.d(
@@ -343,6 +348,52 @@ class TerminalManager private constructor(
     }
 
     /**
+     * 在指定会话中执行一条命令并等待权威完成事件。
+     *
+     * 调用方必须提供目标会话 ID；该方法不会改变当前可见 tab，也不会在会话初始化阶段把
+     * 命令误当作原始 PTY 输入。它是环境配置等批处理流程的唯一等待入口。
+     */
+    suspend fun executeCommandAndWait(
+        sessionId: String,
+        command: String,
+        timeoutMs: Long = 1_800_000L
+    ): CommandExecutionEvent? {
+        val commandId = UUID.randomUUID().toString()
+        val collectorReady = CompletableDeferred<Unit>()
+        val completed = CompletableDeferred<CommandExecutionEvent>()
+        val collector = coroutineScope.launch {
+            commandExecutionEvents
+                .filter { event -> event.sessionId == sessionId && event.commandId == commandId }
+                .onStart { collectorReady.complete(Unit) }
+                .collect { event ->
+                    if (event.isCompleted && !completed.isCompleted) {
+                        completed.complete(event)
+                    }
+                }
+        }
+
+        return try {
+            collectorReady.await()
+            val ready = withTimeoutOrNull(30_000L) {
+                terminalState.first { state ->
+                    state.sessions.any { session ->
+                        session.id == sessionId && session.initState == SessionInitState.READY
+                    }
+                }
+            }
+            if (ready == null) {
+                Log.e(TAG, "Timed out waiting for terminal session to become ready: $sessionId")
+                null
+            } else {
+                sendCommandToSession(sessionId, command, commandId)
+                withTimeoutOrNull(timeoutMs) { completed.await() }
+            }
+        } finally {
+            collector.cancel()
+        }
+    }
+
+    /**
      * 处理队列中的下一个命令
      */
     private suspend fun processNextQueuedCommand(sessionId: String) {
@@ -366,21 +417,45 @@ class TerminalManager private constructor(
      * 内部执行命令的函数, 必须在 commandMutex 锁内部调用
      */
     private suspend fun executeCommandInternal(command: String, session: TerminalSessionData, commandId: String) {
-        if (command.trim() == "clear") {
-            try {
-                writeInputToKernel(session, "clear$TERMINAL_ENTER", "command-clear")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending 'clear' command", e)
+        handleRegularCommand(command, session, commandId)
+        try {
+            val wrappedCommand = buildCommandWithExitMarker(command, commandId)
+            val fullInput = "$wrappedCommand$TERMINAL_ENTER"
+            writeInputToKernel(session, fullInput, "command")
+            Log.d(TAG, "Sent command to PTY: $command")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending command", e)
+            // Do not leave a phantom executing command behind when the PTY
+            // writer has failed. That state would queue every later command
+            // forever while no prompt can arrive to finish this one.
+            session.currentExecutingCommand?.setExecuting(false)
+            session.currentExecutingCommand = null
+            session.currentCommandExitCode = null
+            session.currentCommandOutput.clear()
+            session.commandQueue.clear()
+            throw e
+        }
+    }
+
+    /**
+     * Keep the interactive shell state while exposing the command's real status.
+     * The marker is erased by ANSI control sequences before the next prompt, so it
+     * is available to OutputProcessor without polluting the visible terminal.
+     */
+    private fun buildCommandWithExitMarker(command: String, commandId: String): String {
+        val normalized = command.replace("\r\n", "\n").replace('\r', '\n')
+        return buildString {
+            append(normalized)
+            if (!normalized.endsWith('\n')) {
+                append('\n')
             }
-        } else {
-            handleRegularCommand(command, session, commandId)
-            try {
-                val fullInput = "$command$TERMINAL_ENTER"
-                writeInputToKernel(session, fullInput, "command")
-                Log.d(TAG, "Sent command to PTY: $command")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending command", e)
-            }
+            // Keep the protocol on one physical shell line. Bash echoes each input line through
+            // the PTY; splitting the assignment and printf left internal protocol commands on
+            // the user's screen and made long setup batches look like duplicate submissions.
+            append("printf '\\033[2K%s\\033[2K\\r' '")
+            append(CommandExitMarker.PREFIX)
+            append(commandId)
+            append(":' \"\$?\"\n")
         }
     }
 
@@ -703,6 +778,27 @@ class TerminalManager private constructor(
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to create $linkName link using Java NIO", e)
+            }
+        }
+    }
+
+    /**
+     * Sends Ctrl+C to a specific session without changing the visible active tab.
+     * Timeout cleanup must target the command's session even when another session is
+     * currently selected in the UI.
+     */
+    fun sendInterruptSignal(sessionId: String) {
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                val session = sessionManager.getSession(sessionId)
+                if (session == null) {
+                    Log.w(TAG, "Cannot interrupt missing terminal session $sessionId")
+                    return@launch
+                }
+                writeInputToKernel(session, "\u0003", "interrupt-session")
+                Log.d(TAG, "Sent interrupt signal (Ctrl+C) to session $sessionId")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending interrupt signal to session $sessionId", e)
             }
         }
     }
@@ -1339,6 +1435,7 @@ $prootBindSetup
     private fun handleRegularCommand(command: String, session: com.ai.assistance.operit.terminal.data.TerminalSessionData, commandId: String) {
         session.currentCommandOutput.clear()
         session.currentOutputLineCount = 0
+        session.currentCommandExitCode = null
 
         val newCommandItem = CommandHistoryItem(
             id = commandId,
@@ -1357,7 +1454,8 @@ $prootBindSetup
                 commandId = newCommandItem.id,
                 sessionId = session.id,
                 outputChunk = "",
-                isCompleted = false
+                isCompleted = false,
+                exitCode = null
             ))
         }
     }

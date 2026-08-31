@@ -23,19 +23,12 @@ import com.ai.assistance.operit.terminal.CommandExecutionEvent
 import com.ai.assistance.operit.terminal.TerminalEnvironmentContract
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.data.PackageManagerType
+import com.ai.assistance.operit.terminal.provider.type.HiddenExecResult
 import com.ai.assistance.operit.terminal.utils.SourceManager
 import com.ai.assistance.operit.terminal.utils.SSHConfigManager
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
-import java.util.UUID
 import android.util.Log
 import androidx.compose.ui.platform.LocalContext
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.CancellationException
 
 enum class InstallStatus {
     CHECKING,
@@ -217,65 +210,50 @@ fun SetupScreen(
     // 新增：跟踪包的安装状态
     val packageStatus = remember { mutableStateMapOf<String, InstallStatus>() }
     val terminalManager = remember(context) { TerminalManager.getInstance(context) }
-    val coroutineScope = rememberCoroutineScope()
-    var checkSessionId by remember { mutableStateOf<String?>(null) }
-
-    // 创建一个用于检查的会话，并在Composable销毁时关闭它
-    DisposableEffect(terminalManager) {
-        val job = coroutineScope.launch {
-            try {
-                val session = terminalManager.createNewSession("setup-check")
-                checkSessionId = session.id
-                Log.d("SetupScreen", "Created check session: ${session.id}")
-            } catch (e: Exception) {
-                Log.e("SetupScreen", "Failed to create check session", e)
-            }
-        }
-
-        onDispose {
-            job.cancel()
-            checkSessionId?.let {
-                Log.d("SetupScreen", "Closing check session $it")
-                terminalManager.closeSession(it)
-            }
-        }
-    }
-
-    // 当会话准备好后，开始检查包状态
-    LaunchedEffect(checkSessionId) {
-        val sessionId = checkSessionId ?: return@LaunchedEffect
-
-        // 初始化所有包为检查中状态
+    // 包检测使用 hidden executor，不能抢占用户当前可见 PTY 会话或把探测命令加入用户队列。
+    LaunchedEffect(terminalManager) {
         val allPackages = packageCategories.flatMap { it.packages }
         allPackages.forEach { pkg ->
             packageStatus[pkg.id] = InstallStatus.CHECKING
         }
 
-        // 并发检查所有包
         allPackages.forEach { pkg ->
-            launch {
-                val isInstalled = checkPackageInstalled(terminalManager, sessionId, pkg, this)
-                if (isInstalled) {
-                    packageStatus[pkg.id] = InstallStatus.INSTALLED
-                    selectedPackages[pkg.id] = true
-                } else {
-                    packageStatus[pkg.id] = InstallStatus.NOT_INSTALLED
-                }
+            val result = try {
+                terminalManager.executeHiddenCommand(
+                    command = packageCheckCommand(pkg),
+                    executorKey = "environment-setup-check",
+                    timeoutMs = 15_000L,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e("SetupScreen", "Failed to inspect ${pkg.id}", error)
+                HiddenExecResult(
+                    output = "",
+                    exitCode = -1,
+                    state = HiddenExecResult.State.EXECUTION_ERROR,
+                    error = error.message ?: "environment probe failed",
+                )
+            }
+            val isInstalled = checkPackageInstalled(result, pkg)
+            if (isInstalled) {
+                packageStatus[pkg.id] = InstallStatus.INSTALLED
+                selectedPackages[pkg.id] = true
+            } else {
+                packageStatus[pkg.id] = InstallStatus.NOT_INSTALLED
+            }
 
-                // 检查是否需要更新分类的全选状态
-                val category = packageCategories.find { c -> c.packages.any { it.id == pkg.id } }
-                category?.let { cat ->
-                    val allInCategoryFinishedChecking = cat.packages.all { p -> packageStatus[p.id] != InstallStatus.CHECKING }
-                    if (allInCategoryFinishedChecking) {
-                        val allInCategorySelected = cat.packages.all { p -> selectedPackages[p.id] == true }
-                        categorySelectAll[cat.id] = allInCategorySelected
-                    }
+            val category = packageCategories.find { c -> c.packages.any { it.id == pkg.id } }
+            category?.let { cat ->
+                if (cat.packages.all { p -> packageStatus[p.id] != InstallStatus.CHECKING }) {
+                    categorySelectAll[cat.id] = cat.packages.all { p -> selectedPackages[p.id] == true }
                 }
             }
         }
     }
 
     var showSetupDialog by remember { mutableStateOf(false) }
+    var setupSubmitted by remember { mutableStateOf(false) }
     val commandsToRun = remember { mutableStateOf<List<String>>(emptyList()) }
 
     if (showSetupDialog) {
@@ -285,15 +263,13 @@ fun SetupScreen(
             text = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.setup_dialog_message)) },
             confirmButton = {
                 Button(
+                    enabled = !setupSubmitted,
                     onClick = {
-                        showSetupDialog = false
-                        // 在开始设置前，显式关闭检查会话
-                        checkSessionId?.let { sid ->
-                            Log.d("SetupScreen", "Closing check session $sid before starting setup.")
-                            terminalManager.closeSession(sid)
-                            checkSessionId = null // 防止 onDispose 重复关闭
+                        if (!setupSubmitted) {
+                            setupSubmitted = true
+                            showSetupDialog = false
+                            onSetup(commandsToRun.value)
                         }
-                        onSetup(commandsToRun.value)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006400))
                 ) {
@@ -423,14 +399,12 @@ fun SetupScreen(
                     // 系统升级
                     commands.add("apt upgrade -y")
                     
-                    // 为 pip/pipx 设置国内镜像（永久配置）
-                    commands.add("mkdir -p ~/.config/pip")
-                    commands.add("echo '[global]' > ~/.config/pip/pip.conf")
-                    commands.add("echo 'index-url = https://pypi.tuna.tsinghua.edu.cn/simple' >> ~/.config/pip/pip.conf")
-                    
-                    // 为 uv/uvx 设置国内镜像（永久配置）
-                    commands.add("mkdir -p ~/.config/uv")
-                    commands.add("echo 'index-url = \"https://pypi.tuna.tsinghua.edu.cn/simple\"' > ~/.config/uv/uv.toml")
+                    // 镜像源配置必须复用设置页当前选择，且写入 Ubuntu rootfs 的 root HOME。
+                    commands.addAll(
+                        TerminalEnvironmentContract.buildPipConfigurationCommands(
+                            sourceManager.getSelectedSource(PackageManagerType.PIP).url
+                        )
+                    )
                     
                     // 收集选中的包
                     val selectedAptPackages = mutableListOf<String>()
@@ -500,7 +474,8 @@ fun SetupScreen(
                     if (selectedNpmPackages.isNotEmpty()) {
                         commands.addAll(
                             TerminalEnvironmentContract.buildNodePackageSetupCommands(
-                                selectedNpmPackages
+                                selectedNpmPackages,
+                                sourceManager.getSelectedSource(PackageManagerType.NPM).url,
                             )
                         )
                     }
@@ -698,15 +673,9 @@ private fun PackageItem(
     }
 }
 
-private suspend fun checkPackageInstalled(
-    terminalManager: TerminalManager,
-    sessionId: String,
-    pkg: PackageItem,
-    scope: CoroutineScope
-): Boolean {
-    val command: String = when (pkg.id) {
+internal fun packageCheckCommand(pkg: PackageItem): String = when (pkg.id) {
         "rust" -> "command -v rustc"
-        "uv" -> "command -v uv"
+        "uv" -> "\"${'$'}HOME/.local/bin/uv\" --version"
         "nodejs" -> "node -v 2>/dev/null"
         "pnpm" -> TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
         "go" -> "command -v go"
@@ -714,62 +683,26 @@ private suspend fun checkPackageInstalled(
         "sshpass" -> "command -v sshpass"
         "openssh-server" -> "command -v sshd"
         "gradle" -> "command -v gradle"
-        else -> "dpkg -s ${pkg.command.split(" ").first()}"
+        else -> "dpkg-query -W -f='${'$'}{Status}\\n' ${pkg.command.split(" ").first()}"
     }
 
-    val output = executeCommandAndGetOutput(terminalManager, sessionId, command, scope)
-    if (output == null) return false // 超时或错误
+internal fun checkPackageInstalled(result: HiddenExecResult, pkg: PackageItem): Boolean {
+    if (!result.isOk || result.exitCode != 0) return false
+    val output = result.output
 
     return when (pkg.id) {
         "nodejs" -> {
             // 检查 Node.js 版本是否 >= 24
-            if (output.isBlank() || output.contains("not found")) return false
-            val versionMatch = Regex("""v(\d+)\..*""").find(output.trim())
+            val versionMatch = Regex("""(?:^|\s)v(\d+)\.""").find(output)
             val majorVersion = versionMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
             majorVersion >= 24
         }
-        "rust", "uv", "go", "ssh", "sshpass", "openssh-server", "gradle" -> output.isNotBlank() && !output.contains("not found")
+        "rust", "uv", "go", "ssh", "sshpass", "openssh-server", "gradle" -> output.isNotBlank()
         "pnpm" -> TerminalEnvironmentContract.isNodeToolchainReady(output)
         else -> output.contains("Status: install ok installed")
     }
 }
 
-private suspend fun executeCommandAndGetOutput(
-    terminalManager: TerminalManager,
-    sessionId: String,
-    command: String,
-    scope: CoroutineScope
-): String? {
-    val deferred = CompletableDeferred<String>()
-    val commandId = UUID.randomUUID().toString()
-    val collectorReady = CompletableDeferred<Unit>()
-
-    val job = scope.launch {
-        terminalManager.commandExecutionEvents
-            .filter { it.sessionId == sessionId && it.commandId == commandId }
-            .onStart { collectorReady.complete(Unit) }
-            .collect { event ->
-                // The completion event already contains the authoritative full command output.
-                // Appending it to progress chunks duplicates exact readiness markers and makes
-                // marker-based checks report an installed package as missing.
-                val completedOutput = completedCommandOutput(event)
-                if (completedOutput != null && !deferred.isCompleted) {
-                    deferred.complete(completedOutput)
-                }
-            }
-    }
-
-    collectorReady.await()
-    terminalManager.switchToSession(sessionId)
-    terminalManager.sendCommand(command, commandId)
-
-    val result = withTimeoutOrNull(15000L) { // 15s timeout
-        deferred.await()
-    }
-    
-    job.cancel()
-    return result
-}
-
+/** 保留给旧测试和调用方的完成事件投影；进度事件不参与安装状态判定。 */
 internal fun completedCommandOutput(event: CommandExecutionEvent): String? =
     if (event.isCompleted) event.outputChunk else null

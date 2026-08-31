@@ -98,6 +98,7 @@ data class TerminalSessionData(
     @Transient val ansiParser: AnsiTerminalEmulator = AnsiTerminalEmulator(),
     @Transient var currentExecutingCommand: CommandHistoryItem? = null,
     @Transient var currentOutputLineCount: Int = 0,
+    @Transient var currentCommandExitCode: Int? = null,
     @Transient val commandQueue: MutableList<QueuedCommand> = mutableListOf(),
     @Transient val commandMutex: Mutex = Mutex(),
     // 保存每个会话的滚动位置
@@ -150,4 +151,4 @@ data class SourceConfig(
     val packageManager: PackageManagerType,
     val selectedSourceId: String,
     val sources: List<MirrorSource>
-) 
+)

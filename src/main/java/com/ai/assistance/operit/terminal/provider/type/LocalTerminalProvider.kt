@@ -11,6 +11,7 @@ import com.ai.assistance.operit.terminal.provider.filesystem.LocalFileSystemProv
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
@@ -22,6 +23,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.io.InputStreamReader
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -41,7 +43,8 @@ class LocalTerminalProvider(
         val writer: java.io.BufferedWriter,
         val outputChannel: Channel<String>,
         val readJob: kotlinx.coroutines.Job,
-        val mutex: Mutex = Mutex()
+        val mutex: Mutex = Mutex(),
+        @Volatile var activePid: Long? = null
     )
 
     private val filesDir: File = context.filesDir
@@ -52,7 +55,8 @@ class LocalTerminalProvider(
     private val activeSessions = ConcurrentHashMap<String, TerminalSession>()
     private val hiddenExecShells = ConcurrentHashMap<String, HiddenExecShell>()
     private val hiddenExecShellMutex = Mutex()
-    private val hiddenExecScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    @Volatile
+    private var hiddenExecScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val fileSystemProvider = LocalFileSystemProvider(context)
 
     companion object {
@@ -69,6 +73,9 @@ class LocalTerminalProvider(
     }
 
     override suspend fun connect(): Result<Unit> {
+        if (!hiddenExecScope.isActive) {
+            hiddenExecScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        }
         return Result.success(Unit)
     }
 
@@ -135,32 +142,22 @@ class LocalTerminalProvider(
             }
 
         return try {
-            withTimeout(timeoutMs) {
-                shell.mutex.withLock {
-                    val token = UUID.randomUUID().toString()
-                    Log.d(TAG, "Hidden exec command started: key=$executorKey token=$token timeoutMs=$timeoutMs command=${command.lineSequence().firstOrNull().orEmpty().take(200)}")
-                    val wrappedCommand = buildHiddenExecEnvelope(command, token)
-                    withContext(Dispatchers.IO) {
-                        shell.writer.write(wrappedCommand)
-                        shell.writer.flush()
-                    }
-                    collectHiddenExecResult(shell, token, timeoutMs)
+            shell.mutex.withLock {
+                val token = UUID.randomUUID().toString()
+                Log.d(TAG, "Hidden exec command started: key=$executorKey token=$token timeoutMs=$timeoutMs command=${command.lineSequence().firstOrNull().orEmpty().take(200)}")
+                val wrappedCommand = buildHiddenExecEnvelope(command, token)
+                withContext(Dispatchers.IO) {
+                    shell.writer.write(wrappedCommand)
+                    shell.writer.flush()
                 }
+                collectHiddenExecResult(shell, token, timeoutMs)
             }
-        } catch (e: TimeoutCancellationException) {
-            hiddenExecScope.launch {
-                closeHiddenExecShell(executorKey)
-            }
-            HiddenExecResult(
-                output = "",
-                exitCode = -1,
-                state = HiddenExecResult.State.TIMEOUT,
-                error = "Hidden exec command timed out after ${timeoutMs}ms"
-            )
+        } catch (e: CancellationException) {
+            shell.activePid?.let(::killHiddenExecProcessGroup)
+            closeHiddenExecShell(executorKey, shell)
+            throw e
         } catch (e: Exception) {
-            hiddenExecScope.launch {
-                closeHiddenExecShell(executorKey)
-            }
+            closeHiddenExecShell(executorKey, shell)
             Log.e(TAG, "Failed to execute hidden command in shell: $executorKey", e)
             HiddenExecResult(
                 output = "",
@@ -184,19 +181,12 @@ class LocalTerminalProvider(
     }
 
     private suspend fun getOrCreateHiddenExecShell(executorKey: String): HiddenExecShell {
-        hiddenExecShells[executorKey]?.let { existing ->
-            if (existing.process.isAlive) {
-                return existing
-            }
-            closeHiddenExecShell(executorKey)
-        }
-
         return hiddenExecShellMutex.withLock {
             hiddenExecShells[executorKey]?.let { existing ->
                 if (existing.process.isAlive) {
                     return@withLock existing
                 }
-                closeHiddenExecShell(executorKey)
+                closeHiddenExecShell(executorKey, existing)
             }
 
             val created = createHiddenExecShell(executorKey)
@@ -213,19 +203,21 @@ class LocalTerminalProvider(
                     redirectErrorStream = true
                 ).start()
             }
-        val outputChannel = Channel<String>(Channel.UNLIMITED)
+        // Backpressure prevents a noisy child process from growing an unbounded heap queue.
+        val outputChannel = Channel<String>(Channel.BUFFERED)
         val readJob =
             hiddenExecScope.launch {
                 val input = process.inputStream
-                val buffer = ByteArray(4096)
+                val reader = InputStreamReader(input, Charsets.UTF_8)
+                val buffer = CharArray(4096)
                 try {
                     while (isActive) {
-                        val count = input.read(buffer)
+                        val count = reader.read(buffer)
                         if (count < 0) {
                             break
                         }
                         if (count > 0) {
-                            outputChannel.send(String(buffer, 0, count, Charsets.UTF_8))
+                            outputChannel.send(String(buffer, 0, count))
                         }
                     }
                 } catch (e: Exception) {
@@ -233,6 +225,7 @@ class LocalTerminalProvider(
                         Log.e(TAG, "Hidden exec reader failed for $executorKey", e)
                     }
                 } finally {
+                    runCatching { reader.close() }
                     outputChannel.close()
                 }
             }
@@ -248,7 +241,9 @@ class LocalTerminalProvider(
 
         val readyResult = awaitHiddenExecReady(shell)
         if (!readyResult.isOk) {
-            closeHiddenExecShell(executorKey)
+            // The shell is not registered until readiness succeeds, so close this
+            // instance directly instead of relying on the registry lookup.
+            closeHiddenExecShell(executorKey, shell)
             throw IllegalStateException(
                 readyResult.error.ifBlank { "Hidden exec shell did not become ready" }
             )
@@ -262,14 +257,15 @@ class LocalTerminalProvider(
         return try {
             val rawOutput: String =
                 withTimeout(30000L) {
-                    val builder = StringBuilder()
+                    val builder = HiddenExecOutputBuffer()
+                    val readyDetector = HiddenExecReadyMarkerDetector(READY_MARKER)
                     while (true) {
                         val chunk =
                             shell.outputChannel.receiveCatching().getOrNull()
                                 ?: break
                         logHiddenExecChunk(shell.key, "ready", chunk)
                         builder.append(chunk)
-                        if (builder.indexOf(READY_MARKER) >= 0) {
+                        if (readyDetector.append(chunk)) {
                             break
                         }
                     }
@@ -311,8 +307,15 @@ class LocalTerminalProvider(
         timeoutMs: Long
     ): HiddenExecResult {
         val endMarkerPrefix = "$END_MARKER_PREFIX$token:"
-        val deadline = System.currentTimeMillis() + timeoutMs
-        val builder = StringBuilder()
+        val startedAt = System.currentTimeMillis()
+        val deadline = startedAt + timeoutMs
+        val builder = HiddenExecOutputBuffer(
+            protectedMarkerPrefixes = listOf(
+                "$BEGIN_MARKER_PREFIX$token",
+                "$PID_MARKER_PREFIX$token:",
+                "$END_MARKER_PREFIX$token:",
+            )
+        )
 
         while (System.currentTimeMillis() < deadline) {
             val chunk =
@@ -321,6 +324,7 @@ class LocalTerminalProvider(
                 } ?: break
             logHiddenExecChunk(shell.key, token, chunk)
             builder.append(chunk)
+            extractHiddenExecPid(builder.toString(), token)?.let { shell.activePid = it }
             if (builder.indexOf(endMarkerPrefix) >= 0) {
                 break
             }
@@ -328,26 +332,54 @@ class LocalTerminalProvider(
 
         val rawOutput = builder.toString()
         if (rawOutput.indexOf(endMarkerPrefix) >= 0) {
-            return parseHiddenExecOutput(rawOutput, token)
-        }
-
-        if (!shell.process.isAlive) {
-            return HiddenExecResult(
-                output = "",
-                exitCode = -1,
-                state = HiddenExecResult.State.PROCESS_EXITED,
-                error = "Hidden exec shell exited while executing command",
-                rawOutputPreview = rawOutput.takeLast(1200)
+            shell.activePid = null
+            return parseHiddenExecOutput(rawOutput, token).copy(
+                outputTruncated = builder.truncated,
+                durationMs = System.currentTimeMillis() - startedAt,
             )
         }
 
-        cancelHiddenExecCommand(rawOutput, token)
+        if (!shell.process.isAlive) {
+            val result = HiddenExecResult(
+                output = extractHiddenExecOutput(rawOutput, token),
+                exitCode = -1,
+                state = HiddenExecResult.State.PROCESS_EXITED,
+                error = "Hidden exec shell exited while executing command",
+                rawOutputPreview = rawOutput.takeLast(1200),
+                outputTruncated = builder.truncated,
+                durationMs = System.currentTimeMillis() - startedAt,
+            )
+            shell.activePid = null
+            closeHiddenExecShell(shell.key, shell)
+            return result
+        }
+
+        var pid = cancelHiddenExecCommand(rawOutput, token)
+        shell.activePid = pid
+        collectHiddenExecTimeoutOutput(shell, token, builder)
+        if (pid == null) {
+            pid = extractHiddenExecPid(builder.toString(), token)
+            pid?.let(::killHiddenExecProcessGroup)
+            shell.activePid = pid
+            if (pid != null && builder.indexOf(endMarkerPrefix) < 0) {
+                collectHiddenExecTimeoutOutput(shell, token, builder)
+            }
+        }
+        val settledOutput = builder.toString()
+        val settledEndSeen = settledOutput.indexOf(endMarkerPrefix) >= 0
+        if (!settledEndSeen) {
+            closeHiddenExecShell(shell.key, shell)
+        }
+        shell.activePid = null
         return HiddenExecResult(
-            output = extractHiddenExecOutput(rawOutput, token),
+            output = extractHiddenExecOutput(settledOutput, token),
             exitCode = -1,
             state = HiddenExecResult.State.TIMEOUT,
             error = "Hidden exec command timed out after ${timeoutMs}ms",
-            rawOutputPreview = rawOutput.takeLast(1200)
+            rawOutputPreview = settledOutput.takeLast(1200),
+            outputTruncated = builder.truncated,
+            durationMs = System.currentTimeMillis() - startedAt,
+            processId = pid,
         )
     }
 
@@ -415,23 +447,27 @@ class LocalTerminalProvider(
     private suspend fun collectHiddenExecTimeoutOutput(
         shell: HiddenExecShell,
         token: String,
-        initialRawOutput: String
-    ): String {
+        builder: HiddenExecOutputBuffer,
+    ) {
         val endMarkerPrefix = "$END_MARKER_PREFIX$token:"
-        val builder = StringBuilder(initialRawOutput)
         withTimeoutOrNull(HIDDEN_EXEC_CANCEL_SETTLE_TIMEOUT_MS) {
             while (builder.indexOf(endMarkerPrefix) < 0) {
                 val chunk =
                     shell.outputChannel.receiveCatching().getOrNull()
                         ?: break
+                logHiddenExecChunk(shell.key, token, chunk)
                 builder.append(chunk)
             }
         }
-        return builder.toString()
     }
 
-    private fun cancelHiddenExecCommand(rawOutput: String, token: String) {
-        val pid = extractHiddenExecPid(rawOutput, token) ?: return
+    private fun cancelHiddenExecCommand(rawOutput: String, token: String): Long? {
+        val pid = extractHiddenExecPid(rawOutput, token) ?: return null
+        killHiddenExecProcessGroup(pid)
+        return pid
+    }
+
+    private fun killHiddenExecProcessGroup(pid: Long) {
         runCatching {
             Os.kill((-pid).toInt(), OsConstants.SIGTERM)
         }.onFailure { error ->
@@ -480,13 +516,28 @@ class LocalTerminalProvider(
             .trimEnd('\n', '\r')
     }
 
-    private suspend fun closeHiddenExecShell(executorKey: String) {
-        hiddenExecShells.remove(executorKey)?.let { shell ->
+    private suspend fun closeHiddenExecShell(
+        executorKey: String,
+        expectedShell: HiddenExecShell? = null,
+    ) {
+        val shell =
+            if (expectedShell == null) {
+                hiddenExecShells.remove(executorKey)
+            } else {
+                // Remove only the expected registry entry, but always close the
+                // supplied instance. It may be a freshly-created shell that has
+                // not been registered yet, or an older shell replaced by another
+                // invocation.
+                hiddenExecShells.remove(executorKey, expectedShell)
+                expectedShell
+            }
+        shell?.let {
             withContext(Dispatchers.IO) {
-                runCatching { shell.writer.close() }
-                runCatching { shell.process.destroy() }
-                runCatching { shell.readJob.cancel() }
-                runCatching { shell.outputChannel.close() }
+                it.activePid?.let(::killHiddenExecProcessGroup)
+                runCatching { it.writer.close() }
+                runCatching { it.process.destroy() }
+                runCatching { it.readJob.cancel() }
+                runCatching { it.outputChannel.close() }
             }
             Log.d(TAG, "Closed hidden exec shell: $executorKey")
         }

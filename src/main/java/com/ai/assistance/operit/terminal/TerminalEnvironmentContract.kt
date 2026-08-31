@@ -9,6 +9,7 @@ package com.ai.assistance.operit.terminal
 object TerminalEnvironmentContract {
     internal const val NODE_TOOLCHAIN_READY_MARKER = "__KIYORI_NODE_TOOLCHAIN_READY__"
     internal const val REQUIRED_NODE_MAJOR_VERSION = 24
+    private const val DEFAULT_NPM_REGISTRY = "https://registry.npmmirror.com/"
 
     const val NODE_TOOLCHAIN_CHECK_COMMAND =
         "global_bin=\"${'$'}(npm prefix -g)/bin\" && " +
@@ -24,15 +25,34 @@ object TerminalEnvironmentContract {
             ?.any { line -> line.trim() == NODE_TOOLCHAIN_READY_MARKER }
             ?: false
 
-    internal fun buildNodePackageSetupCommands(packages: List<String>): List<String> {
-        require(packages.isNotEmpty()) { "At least one global Node.js package is required" }
+    internal fun buildPipConfigurationCommands(indexUrl: String): List<String> {
+        require(indexUrl.isNotBlank()) { "A non-empty Python package index URL is required" }
 
         return listOf(
-            "npm config set registry https://registry.npmmirror.com/",
+            "mkdir -p ~/.config/pip",
+            "printf '%s\\n' '[global]' > ~/.config/pip/pip.conf",
+            "printf '%s\\n' ${shellQuote("index-url = $indexUrl")} >> ~/.config/pip/pip.conf",
+            "mkdir -p ~/.config/uv",
+            "printf '%s\\n' ${shellQuote("index-url = \"$indexUrl\"")} > ~/.config/uv/uv.toml",
+        )
+    }
+
+    internal fun buildNodePackageSetupCommands(
+        packages: List<String>,
+        registryUrl: String = DEFAULT_NPM_REGISTRY,
+    ): List<String> {
+        require(packages.isNotEmpty()) { "At least one global Node.js package is required" }
+        require(registryUrl.isNotBlank()) { "A non-empty Node package registry URL is required" }
+
+        return listOf(
+            "npm config set registry ${shellQuote(registryUrl)}",
             "npm cache clean --force",
             // Keep pnpm and TypeScript in npm's single global bin. Readiness resolves this exact
             // prefix instead of assuming every visible or hidden shell inherited the same PATH.
-            "npm install -g pnpm ${packages.joinToString(" ")}",
+            "npm install -g pnpm ${packages.joinToString(" ") { packageName -> shellQuote(packageName) }}",
         )
     }
+
+    private fun shellQuote(value: String): String =
+        "'${value.replace("'", "'\\''")}'"
 }

@@ -2,6 +2,7 @@ package com.ai.assistance.operit.terminal.view.domain
 
 import android.util.Log
 import com.ai.assistance.operit.terminal.CommandExecutionEvent
+import com.ai.assistance.operit.terminal.CommandExitMarker
 import com.ai.assistance.operit.terminal.SessionDirectoryEvent
 import com.ai.assistance.operit.terminal.SessionManager
 import com.ai.assistance.operit.terminal.data.SessionInitState
@@ -172,6 +173,14 @@ class OutputProcessor(
         
         // 检查是否是命令提示符（优先级最高）
         // 即使是 CR line，如果是提示符也应该作为命令完成处理
+        if (consumeCommandExitMarker(sessionId, cleanLine, sessionManager)) {
+            sessionStates[sessionId]?.justHandledCarriageReturn = false
+            return
+        }
+        if (isCommandProtocolEcho(cleanLine)) {
+            sessionStates[sessionId]?.justHandledCarriageReturn = false
+            return
+        }
         if (isPrompt(cleanLine.trim())) {
             Log.d(TAG, "Detected prompt in CR line: '$cleanLine'")
             handlePrompt(sessionId, cleanLine, sessionManager)
@@ -298,6 +307,14 @@ class OutputProcessor(
         // 检测命令回显
         if (isCommandEcho(cleanLine, session)) {
             Log.d(TAG, "Ignoring command echo: '$cleanLine'")
+            return
+        }
+
+        if (isCommandProtocolEcho(cleanLine)) {
+            return
+        }
+
+        if (consumeCommandExitMarker(sessionId, cleanLine, sessionManager)) {
             return
         }
 
@@ -586,11 +603,13 @@ class OutputProcessor(
                 commandId = lastExecutingItem.id,
                 sessionId = sessionId,
                 outputChunk = finalOutput,
-                isCompleted = true
+                isCompleted = true,
+                exitCode = session.currentCommandExitCode
             ))
 
             // Clear the reference since command is no longer executing
             session.currentExecutingCommand = null
+            session.currentCommandExitCode = null
             session.currentCommandOutput.clear()
             
             // 通知命令已完成，可以处理下一个队列命令
@@ -643,16 +662,38 @@ class OutputProcessor(
                     commandId = lastExecutingItem.id,
                     sessionId = sessionId,
                     outputChunk = finalOutput,
-                    isCompleted = true
+                    isCompleted = true,
+                    exitCode = null
                 )
             )
 
             session.currentExecutingCommand = null
+            session.currentCommandExitCode = null
         }
 
         session.currentCommandOutput.clear()
         session.currentOutputLineCount = 0
         session.commandQueue.clear()
+    }
+
+    private fun consumeCommandExitMarker(
+        sessionId: String,
+        cleanLine: String,
+        sessionManager: SessionManager,
+    ): Boolean {
+        val session = sessionManager.getSession(sessionId) ?: return false
+        if (session.currentExecutingCommand?.isExecuting != true) {
+            return false
+        }
+        val exitCode = CommandExitMarker.parse(cleanLine) ?: return false
+        session.currentCommandExitCode = exitCode
+        return true
+    }
+
+    private fun isCommandProtocolEcho(cleanLine: String): Boolean {
+        return cleanLine.contains("__operit_command_exit_code=\$?") ||
+            cleanLine.contains("${CommandExitMarker.PREFIX}") &&
+                cleanLine.contains("printf")
     }
 
     /**

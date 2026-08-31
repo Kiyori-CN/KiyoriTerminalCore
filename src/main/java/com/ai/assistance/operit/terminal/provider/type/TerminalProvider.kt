@@ -9,7 +9,10 @@ data class HiddenExecResult(
     val exitCode: Int,
     val state: State = State.OK,
     val error: String = "",
-    val rawOutputPreview: String = ""
+    val rawOutputPreview: String = "",
+    val outputTruncated: Boolean = false,
+    val durationMs: Long = 0L,
+    val processId: Long? = null
 ) {
     enum class State {
         OK,
@@ -67,7 +70,8 @@ interface TerminalProvider {
     /**
      * 在不可见的执行上下文中执行命令。
      *
-     * 本地终端会复用后台 shell，避免每次命令重新 login/proot。
+     * 本地终端会复用后台 shell，避免每次命令重新 login/proot；超时会终止当前进程组，
+     * 协议无法收敛时关闭该 shell，下一次调用重新建立。
      * SSH 终端可映射到 exec channel。
      */
     suspend fun executeHiddenCommand(

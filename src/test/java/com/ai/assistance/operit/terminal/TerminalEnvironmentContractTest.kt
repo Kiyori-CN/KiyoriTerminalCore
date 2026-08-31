@@ -12,13 +12,26 @@ class TerminalEnvironmentContractTest {
     @Test
     fun nodeSetupUsesTheSharedNpmGlobalBin() {
         val commands = TerminalEnvironmentContract.buildNodePackageSetupCommands(
-            packages = listOf("typescript")
+            packages = listOf("typescript"),
+            registryUrl = "https://registry.example.test/"
         )
 
         assertEquals(3, commands.size)
-        assertEquals("npm install -g pnpm typescript", commands[2])
+        assertEquals("npm config set registry 'https://registry.example.test/'", commands[0])
+        assertEquals("npm install -g pnpm 'typescript'", commands[2])
         assertTrue(commands.none { command -> command.startsWith("pnpm add -g") })
         assertTrue(commands.none { command -> command.contains(".bashrc") })
+    }
+
+    @Test
+    fun pythonSetupUsesTheSelectedIndexAndQuotesIt() {
+        val commands = TerminalEnvironmentContract.buildPipConfigurationCommands(
+            "https://pypi.example.test/simple?mirror=one'two"
+        )
+
+        assertEquals(5, commands.size)
+        assertTrue(commands[2].contains("index-url = https://pypi.example.test/simple?mirror=one'\\''two"))
+        assertTrue(commands[4].contains("index-url = \"https://pypi.example.test/simple?mirror=one'\\''two\""))
     }
 
     @Test

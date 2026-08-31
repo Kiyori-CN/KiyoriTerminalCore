@@ -31,4 +31,5 @@ KiyoriTerminalCore does not poll an independent upstream application-update chan
 - The terminal welcome banner and terminal-owned explanatory text use the Kiyori brand.
 - Ubuntu remains the actual distribution identity; its rootfs archive, `os-release`, `issue`, hostname, standard shell files, and package metadata are not rewritten as Kiyori.
 - Node.js setup installs `pnpm` and global TypeScript through npm's existing global bin. The shared readiness contract resolves `npm prefix -g` and invokes the installed `pnpm` and `tsc` from that exact bin, so visible and hidden sessions do not depend on profile-specific `PATH` state.
+- Hidden command probes bootstrap the same Ubuntu rootfs before starting a persistent `/bin/bash --noprofile --norc -s` stdin shell. The `-s` mode is required because a non-interactive Bash without a script exits immediately when its stdin is a pipe; a dead hidden shell must never be reported as a successful probe.
 - `installed-rootfs/ubuntu`, `.operit_installed_ok`, `OPERIT_*`, native filenames, hidden command markers, and chroot paths remain compatibility identifiers.

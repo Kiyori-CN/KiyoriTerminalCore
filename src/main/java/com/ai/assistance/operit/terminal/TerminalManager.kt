@@ -176,7 +176,10 @@ class TerminalManager private constructor(
         }
 
         // 等待会话初始化完成
-        val success = withTimeoutOrNull(30000) { // 30秒超时
+        // Ubuntu rootfs is extracted on-device before the PTY can reach READY.  Thirty seconds
+        // is shorter than a normal first install on slower Android storage and caused the only
+        // default session to be closed permanently, leaving setup with no target session.
+        val success = withTimeoutOrNull(180_000L) { // 3分钟超时
             terminalState.first { state ->
                 val session = state.sessions.find { it.id == newSession.id }
                 session?.initState == com.ai.assistance.operit.terminal.data.SessionInitState.READY
@@ -374,7 +377,7 @@ class TerminalManager private constructor(
 
         return try {
             collectorReady.await()
-            val ready = withTimeoutOrNull(30_000L) {
+            val ready = withTimeoutOrNull(180_000L) {
                 terminalState.first { state ->
                     state.sessions.any { session ->
                         session.id == sessionId && session.initState == SessionInitState.READY
@@ -442,22 +445,8 @@ class TerminalManager private constructor(
      * The marker is erased by ANSI control sequences before the next prompt, so it
      * is available to OutputProcessor without polluting the visible terminal.
      */
-    private fun buildCommandWithExitMarker(command: String, commandId: String): String {
-        val normalized = command.replace("\r\n", "\n").replace('\r', '\n')
-        return buildString {
-            append(normalized)
-            if (!normalized.endsWith('\n')) {
-                append('\n')
-            }
-            // Keep the protocol on one physical shell line. Bash echoes each input line through
-            // the PTY; splitting the assignment and printf left internal protocol commands on
-            // the user's screen and made long setup batches look like duplicate submissions.
-            append("printf '\\033[2K%s\\033[2K\\r' '")
-            append(CommandExitMarker.PREFIX)
-            append(commandId)
-            append(":' \"\$?\"\n")
-        }
-    }
+    private fun buildCommandWithExitMarker(command: String, commandId: String): String =
+        buildCommandWithExitMarkerProtocol(command, commandId)
 
     /**
      * 发送输入
@@ -1524,4 +1513,27 @@ $prootBindSetup
      * 用于管理本地SSHD服务器（反向SSH隧道场景）
      */
     fun getSSHDServerManager(): SSHDServerManager = sshdServerManager
+}
+
+/** Pure command-envelope builder kept outside TerminalManager so the PTY protocol can be tested
+ * without constructing the Android singleton or touching a live terminal session. */
+internal fun buildCommandWithExitMarkerProtocol(command: String, commandId: String): String {
+    val normalized = command.replace("\r\n", "\n").replace('\r', '\n')
+    return buildString {
+        append(normalized)
+        if (!normalized.endsWith('\n')) {
+            append('\n')
+        }
+        // Keep the protocol on one physical shell line. Bash echoes each input line through the
+        // PTY; splitting the assignment and printf left internal protocol commands on the user's
+        // screen and made long setup batches look like duplicate submissions.
+        // Terminate the protocol line explicitly. A bare CR made the marker and the next prompt
+        // share one physical line; the Canvas parser could then miss the exit code while the
+        // terminal showed a truncated UUID. The erase sequence keeps the marker out of the
+        // steady-state screen, while CRLF gives the stream parser a stable line.
+        append("printf '\\033[2K%s\\033[2K\\r\\n' '")
+        append(CommandExitMarker.PREFIX)
+        append(commandId)
+        append(":' \"\$?\"\n")
+    }
 }

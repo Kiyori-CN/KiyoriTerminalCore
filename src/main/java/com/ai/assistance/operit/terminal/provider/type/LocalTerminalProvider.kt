@@ -66,6 +66,15 @@ class LocalTerminalProvider(
         private const val END_MARKER_PREFIX = "__OPERIT_HIDDEN_END__:"
         private const val PID_MARKER_PREFIX = "__OPERIT_HIDDEN_PID__:"
         private const val HIDDEN_EXEC_CANCEL_SETTLE_TIMEOUT_MS = 3_000L
+        /**
+         * The command passed to login_ubuntu must keep reading the provider pipe.  A plain
+         * `bash --noprofile --norc` exits immediately when stdin is not a TTY, which made every
+         * hidden probe write into a dead process and look like an unresponsive setup screen.
+         * `-s` gives us a persistent, non-interactive stdin-driven shell without prompt noise.
+         */
+        internal const val HIDDEN_EXEC_LOGIN_COMMAND =
+            "source \$HOME/common.sh && install_ubuntu && configure_sources && fix_permissions && " +
+                "login_ubuntu '/bin/bash --noprofile --norc -s'"
     }
 
     override suspend fun isConnected(): Boolean {
@@ -256,7 +265,10 @@ class LocalTerminalProvider(
     private suspend fun awaitHiddenExecReady(shell: HiddenExecShell): HiddenExecResult {
         return try {
             val rawOutput: String =
-                withTimeout(30000L) {
+                // Rootfs extraction is part of the hidden-shell bootstrap on first launch.
+                // Match the visible-session initialization bound so a slow device is reported
+                // as a real timeout instead of an empty probe result.
+                withTimeout(180_000L) {
                     val builder = HiddenExecOutputBuffer()
                     val readyDetector = HiddenExecReadyMarkerDetector(READY_MARKER)
                     while (true) {
@@ -272,8 +284,16 @@ class LocalTerminalProvider(
                     builder.toString()
                 }
 
-            if (rawOutput.contains(READY_MARKER)) {
+            if (rawOutput.contains(READY_MARKER) && shell.process.isAlive) {
                 HiddenExecResult(output = "", exitCode = 0)
+            } else if (rawOutput.contains(READY_MARKER)) {
+                HiddenExecResult(
+                    output = "",
+                    exitCode = -1,
+                    state = HiddenExecResult.State.PROCESS_EXITED,
+                    error = "Hidden exec shell exited immediately after ready",
+                    rawOutputPreview = rawOutput.takeLast(1200)
+                )
             } else if (!shell.process.isAlive) {
                 HiddenExecResult(
                     output = "",
@@ -551,8 +571,7 @@ class LocalTerminalProvider(
 
     private fun buildHiddenExecStartupCommand(): Array<String> {
         val bash = File(binDir, "bash").absolutePath
-        val startScript = "source \$HOME/common.sh && login_ubuntu '/bin/bash --noprofile --norc'"
-        return arrayOf(bash, "-c", startScript)
+        return arrayOf(bash, "-c", HIDDEN_EXEC_LOGIN_COMMAND)
     }
 
     private fun buildHiddenExecEnvelope(command: String, token: String): String {

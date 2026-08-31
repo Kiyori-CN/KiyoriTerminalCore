@@ -67,7 +67,10 @@ class TerminalEnv(
 
         setupExecutionJob = terminalManager.coroutineScope.launch {
             try {
-                val sessionId = withTimeoutOrNull(30_000L) {
+                // The first call may still be extracting the Ubuntu rootfs on slow storage.
+                // Keep the setup job attached to that session instead of returning silently
+                // before it reaches READY.
+                val sessionId = withTimeoutOrNull(180_000L) {
                     terminalManager.terminalState.first { state ->
                         !state.currentSessionId.isNullOrBlank()
                     }.currentSessionId

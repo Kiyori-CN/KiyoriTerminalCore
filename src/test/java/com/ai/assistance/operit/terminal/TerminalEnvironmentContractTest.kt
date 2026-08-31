@@ -10,6 +10,32 @@ import org.junit.Test
 
 class TerminalEnvironmentContractTest {
     @Test
+    fun unattendedSystemRepairCannotOpenDebconfPrompts() {
+        val commands = TerminalEnvironmentContract.SYSTEM_REPAIR_COMMANDS
+
+        assertEquals(4, commands.size)
+        assertTrue(commands.all { it.startsWith("DEBIAN_FRONTEND=noninteractive ") })
+        assertTrue(commands[0].contains("dpkg --configure -a"))
+        assertTrue(commands.drop(1).all { it.contains("apt-get ") })
+        assertTrue(commands.none { it.contains(" apt ") })
+    }
+
+    @Test
+    fun aptAndNodeSetupShareTheUnattendedInstallContract() {
+        val aptCommand = TerminalEnvironmentContract.buildAptInstallCommand(
+            listOf("python3-venv", "package'quoted")
+        )
+        val nodeCommand = TerminalEnvironmentContract.buildNodeJsInstallCommand()
+
+        assertEquals(
+            "DEBIAN_FRONTEND=noninteractive apt-get install -y 'python3-venv' 'package'\\''quoted'",
+            aptCommand,
+        )
+        assertTrue(nodeCommand.contains("DEBIAN_FRONTEND=noninteractive bash -"))
+        assertTrue(nodeCommand.endsWith("DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs"))
+    }
+
+    @Test
     fun nodeSetupUsesTheSharedNpmGlobalBin() {
         val commands = TerminalEnvironmentContract.buildNodePackageSetupCommands(
             packages = listOf("typescript"),

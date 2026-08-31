@@ -636,6 +636,9 @@ class LocalTerminalProvider(
         env["PROOT_TMP_DIR"] = File(filesDir, "tmp").absolutePath
         env["TERM"] = "xterm-256color"
         env["LANG"] = "en_US.UTF-8"
+        env["USER"] = "root"
+        env["LOGNAME"] = "root"
+        env["SHELL"] = "/bin/bash"
         return env
     }
 }

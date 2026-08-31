@@ -9,6 +9,7 @@
     <string name="expand">Expand</string>
     <string name="collapse">Collapse</string>
     <string name="installed">Installed</string>
+    <string name="detection_failed">Unable to detect</string>
     <string name="operit_required">Kiyori Required</string>
     
     <!-- Dialog -->

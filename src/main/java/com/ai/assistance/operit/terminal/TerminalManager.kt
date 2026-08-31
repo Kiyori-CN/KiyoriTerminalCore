@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CompletableDeferred
 import java.io.File
@@ -54,6 +55,7 @@ class TerminalManager private constructor(
 ) {
     internal val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val envInitMutex = Mutex()
+    @Volatile
     private var isEnvInitialized = false
 
     private val filesDir: File = application.filesDir
@@ -388,8 +390,27 @@ class TerminalManager private constructor(
                 Log.e(TAG, "Timed out waiting for terminal session to become ready: $sessionId")
                 null
             } else {
-                sendCommandToSession(sessionId, command, commandId)
-                withTimeoutOrNull(timeoutMs) { completed.await() }
+                val session = sessionManager.getSession(sessionId)
+                if (session == null) {
+                    Log.e(TAG, "Cannot execute command in missing terminal session: $sessionId")
+                    null
+                } else if (session.sessionWriter == null) {
+                    Log.e(TAG, "Cannot execute command before terminal writer is ready: $sessionId")
+                    null
+                } else if (session.isInteractiveMode) {
+                    Log.e(TAG, "Cannot execute batch command while session awaits interactive input: $sessionId")
+                    null
+                } else {
+                    try {
+                        sendCommandToSession(sessionId, command, commandId)
+                        withTimeoutOrNull(timeoutMs) { completed.await() }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        Log.e(TAG, "Failed to submit command for session $sessionId", error)
+                        null
+                    }
+                }
             }
         } finally {
             collector.cancel()
@@ -442,8 +463,8 @@ class TerminalManager private constructor(
 
     /**
      * Keep the interactive shell state while exposing the command's real status.
-     * The marker is erased by ANSI control sequences before the next prompt, so it
-     * is available to OutputProcessor without polluting the visible terminal.
+     * The OSC marker is consumed by the terminal parser and is available to
+     * OutputProcessor through the raw stream without polluting the visible terminal.
      */
     private fun buildCommandWithExitMarker(command: String, commandId: String): String =
         buildCommandWithExitMarkerProtocol(command, commandId)
@@ -986,6 +1007,9 @@ EOF
                 -w /root \
                 /usr/bin/env -i \
                   HOME=/root \
+                  USER=root \
+                  LOGNAME=root \
+                  SHELL=/bin/bash \
                   TERM=xterm-256color \
                   LANG=en_US.UTF-8 \
                   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
@@ -1002,6 +1026,9 @@ EOF
                 -w /root \
                 /usr/bin/env -i \
                   HOME=/root \
+                  USER=root \
+                  LOGNAME=root \
+                  SHELL=/bin/bash \
                   TERM=xterm-256color \
                   LANG=en_US.UTF-8 \
                   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
@@ -1047,6 +1074,9 @@ EOF
             -w /root \
             /usr/bin/env -i \
               HOME=/root \
+              USER=root \
+              LOGNAME=root \
+              SHELL=/bin/bash \
               TERM=xterm-256color \
               LANG=en_US.UTF-8 \
               PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
@@ -1202,6 +1232,7 @@ EOF
         deb ${aptSource.url} noble main restricted universe multiverse
         deb ${aptSource.url} noble-updates main restricted universe multiverse
         deb ${aptSource.url} noble-backports main restricted universe multiverse
+        deb ${aptSource.url} noble-security main restricted universe multiverse
         EOF
           
           # 配置Pip/Uv源
@@ -1220,16 +1251,20 @@ EOF
 
         val fixPermissions = """
         fix_permissions(){
-          echo "Fixing permissions..."
           # Fix "cannot find name for group ID" warnings
           # Append Android groups to Ubuntu /etc/group
           current_groups=$(id -G)
+          permissions_changed=0
           for gid in ${'$'}current_groups; do
             if ! grep -q ":${'$'}gid:" ${'$'}UBUNTU_PATH/etc/group; then
               echo "android_group_${'$'}gid:x:${'$'}gid:" >> ${'$'}UBUNTU_PATH/etc/group
+              permissions_changed=1
             fi
           done
-          echo "Permissions fixed."
+          if [ "${'$'}permissions_changed" -eq 1 ]; then
+            echo "Fixing permissions..."
+            echo "Permissions fixed."
+          fi
         }
         """.trimIndent()
 
@@ -1312,7 +1347,7 @@ EOF
         "${'$'}BIN/busybox" mount --bind $localTmpPath "${'$'}UBUNTU_PATH$localTmpPath" 2>/dev/null || true
         "${'$'}BIN/busybox" mount --bind "${'$'}HOME_DIR" "${'$'}UBUNTU_PATH${'$'}HOME_DIR" 2>/dev/null || true
         COMMAND_TO_EXEC="$(cat "${'$'}CMD_FILE" 2>/dev/null)"
-        "${'$'}BIN/busybox" chroot "${'$'}UBUNTU_PATH" /usr/bin/env -i HOME=/root TERM=xterm-256color LANG=en_US.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "COMMAND_TO_EXEC=${'$'}COMMAND_TO_EXEC" "OPERIT_UID=${'$'}OPERIT_UID" "OPERIT_GID=${'$'}OPERIT_GID" "OPERIT_GROUPS=${'$'}OPERIT_GROUPS" /bin/bash -lc 'echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; umask 0002; if [ -n "${'$'}OPERIT_GID" ]; then chown 0:"${'$'}OPERIT_GID" /root 2>/dev/null || true; chmod 2775 /root 2>/dev/null || true; fi; eval "${'$'}COMMAND_TO_EXEC"'
+        "${'$'}BIN/busybox" chroot "${'$'}UBUNTU_PATH" /usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash TERM=xterm-256color LANG=en_US.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "COMMAND_TO_EXEC=${'$'}COMMAND_TO_EXEC" "OPERIT_UID=${'$'}OPERIT_UID" "OPERIT_GID=${'$'}OPERIT_GID" "OPERIT_GROUPS=${'$'}OPERIT_GROUPS" /bin/bash -lc 'echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; umask 0002; if [ -n "${'$'}OPERIT_GID" ]; then chown 0:"${'$'}OPERIT_GID" /root 2>/dev/null || true; chmod 2775 /root 2>/dev/null || true; fi; eval "${'$'}COMMAND_TO_EXEC"'
         ret=${'$'}?
         cleanup_mounts
         exit ${'$'}ret
@@ -1347,6 +1382,9 @@ $prootBindSetup
               -w /root \
               /usr/bin/env -i \
                 HOME=/root \
+                USER=root \
+                LOGNAME=root \
+                SHELL=/bin/bash \
                 TERM=xterm-256color \
                 LANG=en_US.UTF-8 \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
@@ -1360,6 +1398,9 @@ $prootBindSetup
               -w /root \
               /usr/bin/env -i \
                 HOME=/root \
+                USER=root \
+                LOGNAME=root \
+                SHELL=/bin/bash \
                 TERM=xterm-256color \
                 LANG=en_US.UTF-8 \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
@@ -1518,22 +1559,26 @@ $prootBindSetup
 /** Pure command-envelope builder kept outside TerminalManager so the PTY protocol can be tested
  * without constructing the Android singleton or touching a live terminal session. */
 internal fun buildCommandWithExitMarkerProtocol(command: String, commandId: String): String {
-    val normalized = command.replace("\r\n", "\n").replace('\r', '\n')
+    val normalized = command.replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n')
+    val commandBody = normalized.ifBlank { ":" }
     return buildString {
-        append(normalized)
-        if (!normalized.endsWith('\n')) {
-            append('\n')
-        }
-        // Keep the protocol on one physical shell line. Bash echoes each input line through the
-        // PTY; splitting the assignment and printf left internal protocol commands on the user's
-        // screen and made long setup batches look like duplicate submissions.
+        // Evaluate one shell-quoted payload so Bash reads the whole command before executing it.
+        // This prevents an intermediate prompt between lines of a wrapped command while keeping
+        // `cd`, exports, and other state changes in the current interactive shell.
+        append("eval '")
+        append(commandBody.replace("'", "'\\''"))
+        append("'; ")
         // Terminate the protocol line explicitly. A bare CR made the marker and the next prompt
         // share one physical line; the Canvas parser could then miss the exit code while the
-        // terminal showed a truncated UUID. The erase sequence keeps the marker out of the
-        // steady-state screen, while CRLF gives the stream parser a stable line.
-        append("printf '\\033[2K%s\\033[2K\\r\\n' '")
+        // terminal showed a truncated UUID. The explicit newline gives the stream parser a stable
+        // line boundary after the status envelope.
+        // Carry the exit code in an ANSI OSC payload. Unlike a printable marker line, OSC is
+        // consumed by the terminal parser and cannot leave Kiyori/legacy protocol text on screen.
+        // Keep the exit code as an explicit printf argument; a single %s silently discards $?.
+        append("printf '\\033]1337;%s%s:%s\\007' '")
         append(CommandExitMarker.PREFIX)
+        append("' '")
         append(commandId)
-        append(":' \"\$?\"\n")
+        append("' \"\$?\"\n")
     }
 }

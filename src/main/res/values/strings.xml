@@ -9,6 +9,7 @@
     <string name="expand">展开</string>
     <string name="collapse">收起</string>
     <string name="installed">已安装</string>
+    <string name="detection_failed">无法识别</string>
     <string name="operit_required">Kiyori 必须</string>
     
     <!-- Dialog -->

@@ -199,16 +199,12 @@ class SettingsViewModel(
     }
     
     fun deleteCustomSource(pm: PackageManagerType, sourceId: String) {
+        val wasSelected = sourceManager.getSelectedSourceId(pm) == sourceId
         sourceManager.deleteCustomSource(pm, sourceId)
-        // 如果删除的是当前选中的源，切换到第一个内置源
-        if (sourceManager.getSelectedSourceId(pm) == sourceId) {
-            val firstBuiltInSource = when (pm) {
-                PackageManagerType.APT -> "tuna_apt"
-                PackageManagerType.PIP -> "tuna_pip"
-                PackageManagerType.NPM -> "taobao_npm"
-                PackageManagerType.RUST -> "ustc_rust"
-            }
-            updateSource(pm, firstBuiltInSource)
+        // SourceManager commits the selected-ID change atomically with the list deletion.
+        // Apply the new built-in source only after that invariant is durable.
+        if (wasSelected) {
+            updateSource(pm, sourceManager.getSelectedSourceId(pm))
         }
         loadSourceConfigs()
     }

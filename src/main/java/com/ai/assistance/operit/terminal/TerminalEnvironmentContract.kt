@@ -10,6 +10,20 @@ object TerminalEnvironmentContract {
     internal const val NODE_TOOLCHAIN_READY_MARKER = "__KIYORI_NODE_TOOLCHAIN_READY__"
     internal const val REQUIRED_NODE_MAJOR_VERSION = 24
     private const val DEFAULT_NPM_REGISTRY = "https://registry.npmmirror.com/"
+    private const val NONINTERACTIVE_APT_ENV = "DEBIAN_FRONTEND=noninteractive"
+
+    /**
+     * Environment setup is an unattended batch. Using apt-get with an explicit debconf frontend
+     * prevents maintainer scripts from waiting forever for input that the setup coordinator cannot
+     * supply while it is awaiting the command completion marker.
+     */
+    internal val SYSTEM_REPAIR_COMMANDS =
+        listOf(
+            "$NONINTERACTIVE_APT_ENV dpkg --configure -a",
+            "$NONINTERACTIVE_APT_ENV apt-get install -f -y",
+            "$NONINTERACTIVE_APT_ENV apt-get update -y",
+            "$NONINTERACTIVE_APT_ENV apt-get upgrade -y",
+        )
 
     const val NODE_TOOLCHAIN_CHECK_COMMAND =
         "global_bin=\"${'$'}(npm prefix -g)/bin\" && " +
@@ -52,6 +66,17 @@ object TerminalEnvironmentContract {
             "npm install -g pnpm ${packages.joinToString(" ") { packageName -> shellQuote(packageName) }}",
         )
     }
+
+    internal fun buildAptInstallCommand(packages: Collection<String>): String {
+        require(packages.isNotEmpty()) { "At least one apt package is required" }
+        return "$NONINTERACTIVE_APT_ENV apt-get install -y " +
+            packages.joinToString(" ") { packageName -> shellQuote(packageName) }
+    }
+
+    internal fun buildNodeJsInstallCommand(): String =
+        "curl -fsSL https://deb.nodesource.com/setup_24.x | " +
+            "$NONINTERACTIVE_APT_ENV bash - && " +
+            "$NONINTERACTIVE_APT_ENV apt-get install -y nodejs"
 
     private fun shellQuote(value: String): String =
         "'${value.replace("'", "'\\''")}'"

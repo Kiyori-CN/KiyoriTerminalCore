@@ -2,6 +2,7 @@ package com.ai.assistance.operit.terminal.utils
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.core.content.edit
 import com.ai.assistance.operit.terminal.data.MirrorSource
 import com.ai.assistance.operit.terminal.data.PackageManagerType
@@ -47,12 +48,7 @@ class SourceManager(context: Context) {
 
     // 获取自定义源
     private fun getCustomSources(pm: PackageManagerType): List<MirrorSource> {
-        val key = when (pm) {
-            PackageManagerType.APT -> "custom_apt_sources"
-            PackageManagerType.PIP -> "custom_pip_sources"
-            PackageManagerType.NPM -> "custom_npm_sources"
-            PackageManagerType.RUST -> "custom_rust_sources"
-        }
+        val key = customSourcesKey(pm)
         val jsonString = prefs.getString(key, null) ?: return emptyList()
         return try {
             json.decodeFromString<List<MirrorSource>>(jsonString)
@@ -72,27 +68,23 @@ class SourceManager(context: Context) {
             customSources.add(source)
         }
         
-        val key = when (pm) {
-            PackageManagerType.APT -> "custom_apt_sources"
-            PackageManagerType.PIP -> "custom_pip_sources"
-            PackageManagerType.NPM -> "custom_npm_sources"
-            PackageManagerType.RUST -> "custom_rust_sources"
-        }
+        val key = customSourcesKey(pm)
         prefs.edit {putString(key, json.encodeToString(customSources))}
     }
     
-    // 删除自定义源
+    // 删除自定义源，并在同一份偏好提交中维护选中源不变量。
     fun deleteCustomSource(pm: PackageManagerType, sourceId: String) {
         val customSources = getCustomSources(pm).toMutableList()
         customSources.removeAll { it.id == sourceId }
-        
-        val key = when (pm) {
-            PackageManagerType.APT -> "custom_apt_sources"
-            PackageManagerType.PIP -> "custom_pip_sources"
-            PackageManagerType.NPM -> "custom_npm_sources"
-            PackageManagerType.RUST -> "custom_rust_sources"
+
+        val selectedKey = selectedSourceKey(pm)
+        val selectedId = getSelectedSourceId(pm)
+        prefs.edit(commit = true) {
+            putString(customSourcesKey(pm), json.encodeToString(customSources))
+            if (selectedId == sourceId) {
+                putString(selectedKey, defaultSourceId(pm))
+            }
         }
-        prefs.edit {putString(key, json.encodeToString(customSources))}
     }
     
     // 获取所有源（内置 + 自定义）
@@ -110,36 +102,36 @@ class SourceManager(context: Context) {
 
     // 获取当前为特定包管理器选择的源ID
     fun getSelectedSourceId(pm: PackageManagerType): String {
-        return when (pm) {
-            PackageManagerType.APT -> prefs.getString("selected_apt_source", "tuna_apt") ?: "tuna_apt"
-            PackageManagerType.PIP -> prefs.getString("selected_pip_source", "tuna_pip") ?: "tuna_pip"
-            PackageManagerType.NPM -> prefs.getString("selected_npm_source", "taobao_npm") ?: "taobao_npm"
-            PackageManagerType.RUST -> prefs.getString("selected_rust_source", "ustc_rust") ?: "ustc_rust"
+        val defaultId = defaultSourceId(pm)
+        val storedId = prefs.getString(selectedSourceKey(pm), null)
+        val resolvedId = resolveSelectedSourceId(
+            selectedId = storedId,
+            defaultId = defaultId,
+            availableSources = sourcesFor(pm),
+        )
+        if (storedId != null && storedId != resolvedId) {
+            // Repair stale preferences left by an older custom-source deletion. Keeping the
+            // selected-ID invariant durable prevents environment startup from failing later in
+            // `getSelectedSource()` with an unrelated NullPointerException.
+            Log.w(TAG, "Resetting unknown selected ${pm.name} source '$storedId' to '$resolvedId'")
+            prefs.edit(commit = true) { putString(selectedSourceKey(pm), resolvedId) }
         }
+        return resolvedId
     }
     
     // 获取当前源
     fun getSelectedSource(pm: PackageManagerType): MirrorSource {
         val id = getSelectedSourceId(pm)
-        return when (pm) {
-            PackageManagerType.APT -> aptSources.find { it.id == id }!!
-            PackageManagerType.PIP -> pipSources.find { it.id == id }!!
-            PackageManagerType.NPM -> npmSources.find { it.id == id }!!
-            PackageManagerType.RUST -> rustSources.find { it.id == id }!!
-        }
+        return sourcesFor(pm).firstOrNull { it.id == id }
+            ?: error("Selected ${pm.name} source '$id' is not available")
     }
 
     // 保存选择的源ID
     fun setSelectedSourceId(pm: PackageManagerType, sourceId: String) {
-        prefs.edit {putString(
-                when (pm) {
-                    PackageManagerType.APT -> "selected_apt_source"
-                    PackageManagerType.PIP -> "selected_pip_source"
-                    PackageManagerType.NPM -> "selected_npm_source"
-                    PackageManagerType.RUST -> "selected_rust_source"
-                },
-                sourceId
-        )}
+        require(sourcesFor(pm).any { it.id == sourceId }) {
+            "Unknown ${pm.name} source '$sourceId'"
+        }
+        prefs.edit { putString(selectedSourceKey(pm), sourceId) }
     }
     
     // 生成更改APT源的Shell命令
@@ -152,6 +144,7 @@ class SourceManager(context: Context) {
         deb ${sourceUrl} noble main restricted universe multiverse
         deb ${sourceUrl} noble-updates main restricted universe multiverse
         deb ${sourceUrl} noble-backports main restricted universe multiverse
+        deb ${sourceUrl} noble-security main restricted universe multiverse
         EOF
           echo "APT source changed to: ${source.name}"
         }
@@ -189,4 +182,51 @@ class SourceManager(context: Context) {
         export RUSTUP_UPDATE_ROOT=${baseUrl}/rustup
         """.trimIndent()
     }
+
+    private fun customSourcesKey(pm: PackageManagerType): String = when (pm) {
+        PackageManagerType.APT -> "custom_apt_sources"
+        PackageManagerType.PIP -> "custom_pip_sources"
+        PackageManagerType.NPM -> "custom_npm_sources"
+        PackageManagerType.RUST -> "custom_rust_sources"
+    }
+
+    private fun selectedSourceKey(pm: PackageManagerType): String = when (pm) {
+        PackageManagerType.APT -> "selected_apt_source"
+        PackageManagerType.PIP -> "selected_pip_source"
+        PackageManagerType.NPM -> "selected_npm_source"
+        PackageManagerType.RUST -> "selected_rust_source"
+    }
+
+    private fun defaultSourceId(pm: PackageManagerType): String = when (pm) {
+        PackageManagerType.APT -> "tuna_apt"
+        PackageManagerType.PIP -> "tuna_pip"
+        PackageManagerType.NPM -> "taobao_npm"
+        PackageManagerType.RUST -> "ustc_rust"
+    }
+
+    private fun sourcesFor(pm: PackageManagerType): List<MirrorSource> = when (pm) {
+        PackageManagerType.APT -> aptSources
+        PackageManagerType.PIP -> pipSources
+        PackageManagerType.NPM -> npmSources
+        PackageManagerType.RUST -> rustSources
+    }
+
+    private companion object {
+        const val TAG = "SourceManager"
+    }
+}
+
+/**
+ * Resolves a persisted source ID against the current source catalog and restores the required
+ * selected-source invariant when a custom source was removed or its preference was corrupted.
+ */
+internal fun resolveSelectedSourceId(
+    selectedId: String?,
+    defaultId: String,
+    availableSources: List<MirrorSource>,
+): String {
+    require(availableSources.any { it.id == defaultId }) {
+        "Default source '$defaultId' is not present in the source catalog"
+    }
+    return selectedId?.takeIf { id -> availableSources.any { it.id == id } } ?: defaultId
 }

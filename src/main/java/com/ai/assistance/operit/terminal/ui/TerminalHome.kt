@@ -32,6 +32,7 @@ import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -44,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.ai.assistance.operit.terminal.data.CommandHistoryItem
 import com.ai.assistance.operit.terminal.view.canvas.CanvasTerminalOutput
 import com.ai.assistance.operit.terminal.view.canvas.CanvasTerminalScreen
@@ -75,6 +77,7 @@ fun TerminalHome(
     onNavigateToSettings: () -> Unit
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val rootView = LocalView.current
     val density = LocalDensity.current
@@ -127,7 +130,10 @@ fun TerminalHome(
     val fullscreenImeBottomPx = rawImeBottomPx
     val standardImeBottomPx = (rawImeBottomPx - navigationBottomPx).coerceAtLeast(0)
     val committedFullscreenImeBottomPx = rememberSettledImeBottomPx(fullscreenImeBottomPx)
-    val committedStandardImeBottomPx = rememberSettledImeBottomPx(standardImeBottomPx)
+    // The non-fullscreen terminal reserves the IME area in Compose layout. Keeping a second
+    // committed inset inside the SurfaceView would shrink the PTY viewport twice and would force
+    // the toolbar to overlap the native surface again.
+    val standardImeBottomPadding = with(density) { standardImeBottomPx.toDp() }
 
     // 命令输入框焦点控制
     val inputFocusRequester = remember { FocusRequester() }
@@ -135,12 +141,29 @@ fun TerminalHome(
 
     LaunchedEffect(pendingShowIme) {
         if (pendingShowIme) {
-            pendingShowIme = false
             // 模仿全屏模式，在焦点切换后稍微延迟再请求输入法
             delay(100)
-            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.showSoftInput(rootView, 0)
+            if (pendingShowIme) {
+                pendingShowIme = false
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.showSoftInput(rootView, 0)
+            }
         }
+    }
+
+    fun prepareForNavigation() {
+        // A focused BasicTextField can reopen the IME during NavHost's transition and make the
+        // destination appear to flash. Clear the pending request and focus before changing
+        // routes so the setup/settings screen starts in a stable, keyboard-free state.
+        pendingShowIme = false
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
+        // The output view is a native SurfaceView and may still own the input connection even
+        // after Compose focus is cleared. Hide that connection from the window before removing
+        // the view so a toolbar tap cannot reopen the terminal IME during route disposal.
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(rootView.windowToken, 0)
+        rootView.clearFocus()
     }
 
     // 语法高亮
@@ -345,6 +368,10 @@ fun TerminalHome(
                     Modifier
                         .fillMaxSize()
                         .navigationBarsPadding()
+                        // Reserve the keyboard area in layout coordinates. A graphicsLayer
+                        // translation only moves pixels; SurfaceView hit testing would still use
+                        // the old bounds and could receive the environment button tap.
+                        .padding(bottom = standardImeBottomPadding)
             ) {
                 // Canvas输出区域（占满剩余空间）
                 if (isDirectInputMode) {
@@ -354,8 +381,8 @@ fun TerminalHome(
                         modifier = Modifier.weight(1f),
                         config = fontConfig,
                         pty = currentPty,
-                        imeAnimationOffsetPx = standardImeBottomPx,
-                        committedImeBottomInsetPx = committedStandardImeBottomPx,
+                        imeAnimationOffsetPx = 0,
+                        committedImeBottomInsetPx = 0,
                         onInput = { sendDirectInput(it) },
                         sessionId = env.currentSessionId,
                         onScrollOffsetChanged = { id, offset -> env.saveScrollOffset(id, offset) },
@@ -367,14 +394,15 @@ fun TerminalHome(
                         onNewTab = env::onNewSession
                     )
                 } else {
-                    // 嵌入聊天页时，外层已统一处理 IME；独立终端页则继续使用本地 IME 位移来驱动画布 viewport。
+                    // The parent layout reserves the IME area; this output view therefore uses
+                    // its measured height directly and does not apply a second inset translation.
                     CanvasTerminalOutput(
                         emulator = env.terminalEmulator,
                         modifier = Modifier.weight(1f),
                         config = fontConfig,
                         pty = currentPty,
-                        imeAnimationOffsetPx = standardImeBottomPx,
-                        committedImeBottomInsetPx = committedStandardImeBottomPx,
+                        imeAnimationOffsetPx = 0,
+                        committedImeBottomInsetPx = 0,
                         onRequestShowKeyboard = {
                             inputFocusRequester.requestFocus()
                             pendingShowIme = true
@@ -392,9 +420,10 @@ fun TerminalHome(
 
                 Column(
                     modifier =
-                        Modifier.graphicsLayer {
-                            translationY = -standardImeBottomPx.toFloat()
-                        }
+                        Modifier
+                            // Keep controls above the native SurfaceView during IME inset updates;
+                            // layout-level IME padding already keeps them outside its bounds.
+                            .zIndex(1f)
                 ) {
                     // 终端工具栏
                     TerminalToolbar(
@@ -402,8 +431,14 @@ fun TerminalHome(
                         onSendCommand = { env.onSendInput(it, true) },
                         fontSize = fontSize * 0.8f,
                         padding = padding,
-                        onNavigateToSetup = onNavigateToSetup,
-                        onNavigateToSettings = onNavigateToSettings,
+                        onNavigateToSetup = {
+                            prepareForNavigation()
+                            onNavigateToSetup()
+                        },
+                        onNavigateToSettings = {
+                            prepareForNavigation()
+                            onNavigateToSettings()
+                        },
                         isDirectInputMode = isDirectInputMode,
                         showVirtualKeyboard = showVirtualKeyboard,
                         onToggleVirtualKeyboard = { showVirtualKeyboard = !showVirtualKeyboard },
@@ -602,7 +637,6 @@ private fun TerminalToolbar(
     onToggleVirtualKeyboard: () -> Unit,
     onToggleInputMode: () -> Unit
 ) {
-    val context = LocalContext.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = Color(0xFF1A1A1A),
@@ -656,12 +690,15 @@ private fun TerminalToolbar(
 
             // 环境配置按钮
             Surface(
-                modifier = Modifier.clickable { onNavigateToSetup() },
+                modifier =
+                    Modifier
+                        .heightIn(min = 40.dp)
+                        .clickable { onNavigateToSetup() },
                 color = Color(0xFF4A4A4A),
                 shape = RoundedCornerShape(6.dp)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = padding * 0.75f, vertical = padding * 0.4f),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -704,15 +741,22 @@ private fun TerminalToolbar(
             }
 
             // 设置按钮
-            Icon(
-                imageVector = Icons.Default.Settings,
-                contentDescription = stringResource(com.ai.assistance.operit.terminal.R.string.settings),
-                tint = Color.Gray,
-                modifier = Modifier
-                    .clickable { onNavigateToSettings() }
-                    .padding(start = padding)
-                    .size(padding * 2.5f)
-            )
+            IconButton(
+                onClick = onNavigateToSettings,
+                modifier = Modifier.size(40.dp),
+                colors =
+                    IconButtonDefaults.iconButtonColors(
+                        containerColor = Color(0xFF3A3A3A),
+                        contentColor = Color.White,
+                    ),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription =
+                        stringResource(com.ai.assistance.operit.terminal.R.string.settings),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }

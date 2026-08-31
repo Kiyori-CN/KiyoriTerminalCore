@@ -33,7 +33,8 @@ import kotlinx.coroutines.CancellationException
 enum class InstallStatus {
     CHECKING,
     INSTALLED,
-    NOT_INSTALLED
+    NOT_INSTALLED,
+    UNKNOWN,
 }
 
 data class PackageItem(
@@ -79,7 +80,7 @@ fun SetupScreen(
                         PackageItem(
                             "nodejs",
                             stringResource(com.ai.assistance.operit.terminal.R.string.package_nodejs_name),
-                            "curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt install -y nodejs",
+                            TerminalEnvironmentContract.buildNodeJsInstallCommand(),
                             stringResource(com.ai.assistance.operit.terminal.R.string.package_nodejs_desc),
                         ),
                         PackageItem(
@@ -210,45 +211,44 @@ fun SetupScreen(
     // 新增：跟踪包的安装状态
     val packageStatus = remember { mutableStateMapOf<String, InstallStatus>() }
     val terminalManager = remember(context) { TerminalManager.getInstance(context) }
-    // 包检测使用 hidden executor，不能抢占用户当前可见 PTY 会话或把探测命令加入用户队列。
+    // 包检测使用一次结构化 hidden probe，不能抢占用户当前可见 PTY 会话或把探测命令加入用户队列。
     LaunchedEffect(terminalManager) {
         val allPackages = packageCategories.flatMap { it.packages }
         allPackages.forEach { pkg ->
             packageStatus[pkg.id] = InstallStatus.CHECKING
         }
 
+        val result = try {
+            terminalManager.executeHiddenCommand(
+                command = packageProbeCommand(allPackages),
+                executorKey = "environment-setup-check",
+                timeoutMs = 30_000L,
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Log.e("SetupScreen", "Failed to inspect environment packages", error)
+            HiddenExecResult(
+                output = "",
+                exitCode = -1,
+                state = HiddenExecResult.State.EXECUTION_ERROR,
+                error = error.message ?: "environment probe failed",
+            )
+        }
+        val statuses = packageProbeStatuses(result, allPackages)
         allPackages.forEach { pkg ->
-            val result = try {
-                terminalManager.executeHiddenCommand(
-                    command = packageCheckCommand(pkg),
-                    executorKey = "environment-setup-check",
-                    timeoutMs = 15_000L,
-                )
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                Log.e("SetupScreen", "Failed to inspect ${pkg.id}", error)
-                HiddenExecResult(
-                    output = "",
-                    exitCode = -1,
-                    state = HiddenExecResult.State.EXECUTION_ERROR,
-                    error = error.message ?: "environment probe failed",
-                )
-            }
-            val isInstalled = checkPackageInstalled(result, pkg)
-            if (isInstalled) {
-                packageStatus[pkg.id] = InstallStatus.INSTALLED
+            val status = statuses[pkg.id] ?: InstallStatus.UNKNOWN
+            packageStatus[pkg.id] = status
+            if (status == InstallStatus.INSTALLED) {
                 selectedPackages[pkg.id] = true
-            } else {
-                packageStatus[pkg.id] = InstallStatus.NOT_INSTALLED
             }
-
-            val category = packageCategories.find { c -> c.packages.any { it.id == pkg.id } }
-            category?.let { cat ->
-                if (cat.packages.all { p -> packageStatus[p.id] != InstallStatus.CHECKING }) {
-                    categorySelectAll[cat.id] = cat.packages.all { p -> selectedPackages[p.id] == true }
+        }
+        packageCategories.forEach { category ->
+            categorySelectAll[category.id] =
+                category.packages.all { pkg ->
+                    packageStatus[pkg.id] == InstallStatus.INSTALLED ||
+                        selectedPackages[pkg.id] == true
                 }
-            }
         }
     }
 
@@ -388,16 +388,9 @@ fun SetupScreen(
             Button(
                 onClick = {
                     val commands = mutableListOf<String>()
-                    
-                    // 系统修复（串行）
-                    commands.add("dpkg --configure -a")
-                    commands.add("apt install -f -y")
 
-                    // 更新软件源
-                    commands.add("apt update -y")
-
-                    // 系统升级
-                    commands.add("apt upgrade -y")
+                    // 自动配置必须保持非交互；任何一步失败都由逐步执行协议停止后续命令。
+                    commands.addAll(TerminalEnvironmentContract.SYSTEM_REPAIR_COMMANDS)
                     
                     // 镜像源配置必须复用设置页当前选择，且写入 Ubuntu rootfs 的 root HOME。
                     commands.addAll(
@@ -456,7 +449,7 @@ fun SetupScreen(
                     
                     // 使用 apt 安装所有 apt 包和依赖
                     if (allAptDeps.isNotEmpty()) {
-                        commands.add("apt install -y ${allAptDeps.joinToString(" ")}")
+                        commands.add(TerminalEnvironmentContract.buildAptInstallCommand(allAptDeps))
                     }
                     
                     // 然后运行自定义命令（如安装 rust, uv, nodejs 等）
@@ -597,7 +590,7 @@ private fun CategoryCard(
                             }
                             categorySelectAll[category.id] = allSelectedAfterChange
                         },
-                        status = packageStatus[pkg.id] ?: InstallStatus.NOT_INSTALLED
+                        status = packageStatus[pkg.id] ?: InstallStatus.CHECKING
                     )
                 }
             }
@@ -615,6 +608,7 @@ private fun PackageItem(
     val context = LocalContext.current
     val isInstalled = status == InstallStatus.INSTALLED
     val isChecking = status == InstallStatus.CHECKING
+    val isUnknown = status == InstallStatus.UNKNOWN
 
     Row(
         modifier = Modifier
@@ -659,6 +653,13 @@ private fun PackageItem(
                         fontSize = 12.sp,
                         modifier = Modifier.padding(start = 4.dp)
                     )
+                } else if (isUnknown) {
+                    Text(
+                        text = " (${stringResource(com.ai.assistance.operit.terminal.R.string.detection_failed)})",
+                        color = Color(0xFFFFA500),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
                 }
             }
             if (packageItem.description.isNotEmpty()) {
@@ -674,17 +675,25 @@ private fun PackageItem(
 }
 
 internal fun packageCheckCommand(pkg: PackageItem): String = when (pkg.id) {
-        "rust" -> "command -v rustc"
-        "uv" -> "\"${'$'}HOME/.local/bin/uv\" --version"
-        "nodejs" -> "node -v 2>/dev/null"
-        "pnpm" -> TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
-        "go" -> "command -v go"
-        "ssh" -> "command -v ssh"
-        "sshpass" -> "command -v sshpass"
-        "openssh-server" -> "command -v sshd"
-        "gradle" -> "command -v gradle"
-        else -> "dpkg-query -W -f='${'$'}{Status}\\n' ${pkg.command.split(" ").first()}"
-    }
+    "rust" -> "command -v rustc"
+    "uv" -> "PATH=\"${'$'}HOME/.local/bin:${'$'}PATH\" command -v uv && PATH=\"${'$'}HOME/.local/bin:${'$'}PATH\" uv --version"
+    "nodejs" -> "node -v 2>/dev/null"
+    "pnpm" -> TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
+    "go" -> "command -v go"
+    "ssh" -> "command -v ssh"
+    "sshpass" -> "command -v sshpass"
+    "openssh-server" -> "command -v sshd"
+    "gradle" -> "command -v gradle"
+    "python-is-python3" ->
+        "python --version >/dev/null 2>&1 && python3 --version >/dev/null 2>&1 && " +
+            "python_path=\"${'$'}(command -v python)\" && python3_path=\"${'$'}(command -v python3)\" && " +
+            "[ \"${'$'}(readlink -f \"${'$'}python_path\")\" = \"${'$'}(readlink -f \"${'$'}python3_path\")\" ]"
+    "python3-venv" -> "python3 -m venv --help >/dev/null 2>&1"
+    "python3-pip" -> "python3 -m pip --version >/dev/null 2>&1"
+    else ->
+        "status=${'$'}(dpkg-query -W -f='${'$'}{Status}\\n' '${pkg.command.split(" ").first()}' 2>/dev/null) && " +
+            "[ \"${'$'}status\" = 'install ok installed' ]"
+}
 
 internal fun checkPackageInstalled(result: HiddenExecResult, pkg: PackageItem): Boolean {
     if (!result.isOk || result.exitCode != 0) return false
@@ -697,10 +706,63 @@ internal fun checkPackageInstalled(result: HiddenExecResult, pkg: PackageItem): 
             val majorVersion = versionMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
             majorVersion >= 24
         }
+        "python-is-python3", "python3-venv", "python3-pip" -> true
         "rust", "uv", "go", "ssh", "sshpass", "openssh-server", "gradle" -> output.isNotBlank()
         "pnpm" -> TerminalEnvironmentContract.isNodeToolchainReady(output)
-        else -> output.contains("Status: install ok installed")
+        else -> output.lineSequence().any { line ->
+            line.trim() == "install ok installed" || line.trim() == "Status: install ok installed"
+        }
     }
+}
+
+private const val PACKAGE_PROBE_BEGIN_MARKER = "__KIYORI_ENV_PROBE_BEGIN__"
+private const val PACKAGE_PROBE_ENTRY_PREFIX = "__KIYORI_ENV_PROBE__:"
+private const val PACKAGE_PROBE_END_MARKER = "__KIYORI_ENV_PROBE_END__"
+
+internal fun packageProbeCommand(packages: List<PackageItem>): String = buildString {
+    append("printf '%s\\n' '")
+    append(PACKAGE_PROBE_BEGIN_MARKER)
+    append("'\\n")
+    packages.forEach { pkg ->
+        append("if (")
+        append(packageCheckCommand(pkg))
+        append(") >/dev/null 2>&1; then printf '%s1\\n' '")
+        append(PACKAGE_PROBE_ENTRY_PREFIX)
+        append(pkg.id)
+        append("'; else printf '%s0\\n' '")
+        append(PACKAGE_PROBE_ENTRY_PREFIX)
+        append(pkg.id)
+        append("'; fi\\n")
+    }
+    append("printf '%s\\n' '")
+    append(PACKAGE_PROBE_END_MARKER)
+    append("'\\n")
+}
+
+internal fun packageProbeStatuses(
+    result: HiddenExecResult,
+    packages: List<PackageItem>,
+): Map<String, InstallStatus> {
+    if (!result.isOk || result.exitCode != 0) {
+        return packages.associate { pkg -> pkg.id to InstallStatus.UNKNOWN }
+    }
+
+    val lines = result.output.lineSequence().map(String::trim).toList()
+    if (PACKAGE_PROBE_BEGIN_MARKER !in lines || PACKAGE_PROBE_END_MARKER !in lines) {
+        return packages.associate { pkg -> pkg.id to InstallStatus.UNKNOWN }
+    }
+    val expectedIds = packages.map(PackageItem::id).toSet()
+    val values = lines.mapNotNull { line ->
+        when {
+            line.startsWith(PACKAGE_PROBE_ENTRY_PREFIX) && line.endsWith('0') ->
+                line.removePrefix(PACKAGE_PROBE_ENTRY_PREFIX).dropLast(1) to InstallStatus.NOT_INSTALLED
+            line.startsWith(PACKAGE_PROBE_ENTRY_PREFIX) && line.endsWith('1') ->
+                line.removePrefix(PACKAGE_PROBE_ENTRY_PREFIX).dropLast(1) to InstallStatus.INSTALLED
+            else -> null
+        }
+    }.filter { (id, _) -> id in expectedIds }.toMap()
+
+    return packages.associate { pkg -> pkg.id to (values[pkg.id] ?: InstallStatus.UNKNOWN) }
 }
 
 /** 保留给旧测试和调用方的完成事件投影；进度事件不参与安装状态判定。 */

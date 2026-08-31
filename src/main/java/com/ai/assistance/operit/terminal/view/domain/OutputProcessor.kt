@@ -24,8 +24,13 @@ internal const val KIYORI_WELCOME_MESSAGE =
  * @property justHandledCarriageReturn 如果最近处理的行分隔符是回车符（CR），则为 true
  */
 private data class SessionProcessingState(
-    var justHandledCarriageReturn: Boolean = false
+    var justHandledCarriageReturn: Boolean = false,
+    val commandExitDisplayFilter: CommandExitMarker.DisplayFilter = CommandExitMarker.DisplayFilter(),
 )
+
+/** A wrapped command is complete only after its status envelope has supplied an exit code. */
+internal fun shouldFinishCommandOnPrompt(commandExecuting: Boolean, exitCode: Int?): Boolean =
+    !commandExecuting || exitCode != null
 
 /**
  * 终端输出处理器
@@ -65,6 +70,13 @@ class OutputProcessor(
 
         Log.d(TAG, "Processing chunk for session $sessionId. New buffer size: ${session.rawBuffer.length}")
 
+        val state = sessionStates.getOrPut(sessionId) { SessionProcessingState() }
+        val displayChunk = state.commandExitDisplayFilter.filter(chunk)
+
+        // Parse the status envelope before line-oriented processing. OSC markers can arrive split
+        // across read chunks, so inspect the accumulated raw buffer rather than one chunk only.
+        consumeCommandExitMarker(sessionId, session.rawBuffer.toString(), sessionManager)
+
         // 始终检查全屏模式切换
         if (detectFullscreenMode(sessionId, session.rawBuffer, sessionManager)) {
             // 如果检测到模式切换，缓冲区可能已被修改，及早返回以处理下一个块
@@ -73,15 +85,15 @@ class OutputProcessor(
 
         // 始终更新 ANSI 解析器（用于 Canvas 渲染），包括初始化阶段
         // 这样用户可以看到初始化过程中的所有输出，包括错误信息
-        session.ansiParser.parse(chunk)
+        if (displayChunk.isNotEmpty()) {
+            session.ansiParser.parse(displayChunk)
+        }
         
         // 如果在全屏模式下，跳过行解析逻辑（全屏应用自己管理屏幕）
         if (session.isFullscreen) {
             // 不需要再次解析，ansiParser 已经更新
             return
         }
-
-        val state = sessionStates.getOrPut(sessionId) { SessionProcessingState() }
 
         // 从缓冲区中提取并处理行
         while (session.rawBuffer.isNotEmpty()) {
@@ -411,6 +423,20 @@ class OutputProcessor(
         }
 
         if (isAPrompt) {
+            // Interactive Bash can emit a prompt between two lines of one wrapped command
+            // (for example, after `dpkg` and before the printf status envelope).  That prompt is
+            // not completion evidence: wait for the envelope to publish the command's exit code,
+            // then finish on the following prompt.  Without this guard, setup always stops after
+            // its first step even though the shell is still processing the wrapper.
+            if (!shouldFinishCommandOnPrompt(
+                    commandExecuting = session.currentExecutingCommand?.isExecuting == true,
+                    exitCode = session.currentCommandExitCode,
+                )
+            ) {
+                Log.d(TAG, "Ignoring intermediate prompt before command exit marker for session $sessionId")
+                return true
+            }
+
             // 检测到常规提示符，表示我们回到了shell。
             // 确保退出任何持久的交互模式。
             if (session.isInteractiveMode) {
@@ -685,15 +711,14 @@ class OutputProcessor(
         if (session.currentExecutingCommand?.isExecuting != true) {
             return false
         }
-        val exitCode = CommandExitMarker.parse(cleanLine) ?: return false
+        val commandId = session.currentExecutingCommand?.id ?: return false
+        val exitCode = CommandExitMarker.parse(cleanLine, expectedCommandId = commandId) ?: return false
         session.currentCommandExitCode = exitCode
         return true
     }
 
     private fun isCommandProtocolEcho(cleanLine: String): Boolean {
-        return cleanLine.contains("__operit_command_exit_code=\$?") ||
-            cleanLine.contains("${CommandExitMarker.PREFIX}") &&
-                cleanLine.contains("printf")
+        return CommandExitMarker.isProtocolEcho(cleanLine)
     }
 
     /**

@@ -63,7 +63,10 @@ fun CanvasTerminalScreen(
             view.setTabBarState(tabs, currentTabId, onTabClick, onTabClose, onNewTab)
         },
         onRelease = { view ->
-            // 在视图被移除时释放资源，避免持有渲染线程和监听器引用
+            // Hide the native surface before stopping its renderer. SurfaceView destruction is
+            // asynchronous on some Android compositors; clearing visibility first prevents its
+            // last frame from covering the destination route during setup navigation.
+            view.visibility = android.view.View.GONE
             view.release()
         },
         modifier = modifier
@@ -131,7 +134,7 @@ fun PerformanceMonitoredTerminal(
             view.setEmulator(emulator)
         },
         onRelease = { view ->
-            // 在视图被移除时释放资源，避免持有渲染线程和监听器引用
+            view.visibility = android.view.View.GONE
             view.release()
         },
         modifier = modifier
@@ -190,7 +193,7 @@ fun CanvasTerminalOutput(
             view.setTabBarState(tabs, currentTabId, onTabClick, onTabClose, onNewTab)
         },
         onRelease = { view ->
-            // 在视图被移除时释放资源，避免持有渲染线程和监听器引用
+            view.visibility = android.view.View.GONE
             view.release()
         },
         modifier = modifier

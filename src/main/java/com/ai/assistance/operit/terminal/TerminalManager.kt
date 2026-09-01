@@ -68,12 +68,22 @@ class TerminalManager private constructor(
     // SharedPreferences for reading settings
     private val prefs = application.getSharedPreferences("terminal_settings", Context.MODE_PRIVATE)
 
+    // 状态和事件流
+    private val _commandExecutionEvents = MutableSharedFlow<CommandExecutionEvent>()
+    val commandExecutionEvents: SharedFlow<CommandExecutionEvent> = _commandExecutionEvents.asSharedFlow()
+
+    private val _directoryChangeEvents = MutableSharedFlow<SessionDirectoryEvent>()
+    val directoryChangeEvents: SharedFlow<SessionDirectoryEvent> = _directoryChangeEvents.asSharedFlow()
+
     // 核心组件
+    private val commandEventDispatcher = OrderedCommandExecutionEventDispatcher(coroutineScope) { event ->
+        _commandExecutionEvents.emit(event)
+    }
     private val sessionManager = SessionManager(this)
     private val outputProcessor = OutputProcessor(
         onCommandExecutionEvent = { event ->
-            coroutineScope.launch {
-                _commandExecutionEvents.emit(event)
+            if (!commandEventDispatcher.offer(event)) {
+                Log.w(TAG, "Dropping command event after terminal manager shutdown: ${event.commandId}")
             }
         },
         onDirectoryChangeEvent = { event ->
@@ -94,13 +104,6 @@ class TerminalManager private constructor(
     // 单例的 TerminalProvider
     private var terminalProvider: TerminalProvider? = null
     private val providerMutex = Mutex()
-
-    // 状态和事件流
-    private val _commandExecutionEvents = MutableSharedFlow<CommandExecutionEvent>()
-    val commandExecutionEvents: SharedFlow<CommandExecutionEvent> = _commandExecutionEvents.asSharedFlow()
-
-    private val _directoryChangeEvents = MutableSharedFlow<SessionDirectoryEvent>()
-    val directoryChangeEvents: SharedFlow<SessionDirectoryEvent> = _directoryChangeEvents.asSharedFlow()
 
     // 暴露会话管理器的状态
     val terminalState: StateFlow<TerminalState> = sessionManager.state
@@ -1478,15 +1481,15 @@ $prootBindSetup
         // Set the current executing command reference for efficient access
         session.currentExecutingCommand = newCommandItem
 
-        // 发出命令开始执行事件
-        coroutineScope.launch {
-            _commandExecutionEvents.emit(CommandExecutionEvent(
+        // 发出命令开始执行事件；与正文和完成事件共用 FIFO，避免完成事件抢先到达消费者。
+        if (!commandEventDispatcher.offer(CommandExecutionEvent(
                 commandId = newCommandItem.id,
                 sessionId = session.id,
                 outputChunk = "",
                 isCompleted = false,
                 exitCode = null
-            ))
+            ))) {
+            Log.w(TAG, "Dropping command start event after terminal manager shutdown: ${newCommandItem.id}")
         }
     }
 
@@ -1511,6 +1514,7 @@ $prootBindSetup
 
     fun cleanup() {
         prepareForMaintenance()
+        commandEventDispatcher.close()
         coroutineScope.cancel()
         Log.d(TAG, "All active sessions cleaned up.")
     }

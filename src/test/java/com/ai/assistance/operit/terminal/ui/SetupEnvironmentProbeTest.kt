@@ -13,6 +13,8 @@ class SetupEnvironmentProbeTest {
         assertTrue(packageCheckCommand(PackageItem("python3-pip", "", "python3-pip")).contains("python3 -m pip"))
         assertTrue(packageCheckCommand(PackageItem("uv", "", "pipx install uv")).contains("${'$'}HOME/.local/bin"))
         assertTrue(packageCheckCommand(PackageItem("rust", "", "RUST_INSTALL_COMMAND")).contains("${'$'}HOME/.cargo/bin"))
+        assertTrue(packageCheckCommand(PackageItem("rust", "", "RUST_INSTALL_COMMAND")).contains("command -v cargo"))
+        assertTrue(packageCheckCommand(PackageItem("rust", "", "RUST_INSTALL_COMMAND")).contains("cargo --version"))
         val nodeCheck = packageCheckCommand(PackageItem("nodejs", "", "node"))
         assertTrue(nodeCheck.contains("node -v"))
         assertTrue(nodeCheck.contains("process.versions.node"))

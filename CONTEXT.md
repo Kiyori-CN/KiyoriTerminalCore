@@ -11,7 +11,9 @@ This file defines stable repository terminology and compatibility boundaries. Ta
 
 ## Module contract
 
-- `TerminalManager` owns terminal sessions and exposes terminal state through Kotlin Flows.
+- `TerminalManager` owns terminal sessions and exposes terminal state through Kotlin Flows. Command
+  execution events are published through one FIFO dispatcher, so a command's start and output events
+  always arrive before its completion event; consumers may stop at completion without losing output.
 - `TerminalService` exposes terminal operations to other processes.
 - `ITerminalService.aidl` and `ITerminalCallback.aidl` define the IPC contract.
 - The module is an Android library. Application branding, release distribution, and update ownership belong to the Kiyori parent project.

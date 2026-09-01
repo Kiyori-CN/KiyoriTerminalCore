@@ -697,7 +697,9 @@ private fun PackageItem(
 internal fun packageCheckCommand(pkg: PackageItem): String = when (pkg.id) {
     "rust" ->
         "PATH=\"${TerminalEnvironmentContract.RUSTUP_BIN_DIR}:${'$'}PATH\" command -v rustc && " +
-            "PATH=\"${TerminalEnvironmentContract.RUSTUP_BIN_DIR}:${'$'}PATH\" rustc --version"
+            "PATH=\"${TerminalEnvironmentContract.RUSTUP_BIN_DIR}:${'$'}PATH\" rustc --version && " +
+            "PATH=\"${TerminalEnvironmentContract.RUSTUP_BIN_DIR}:${'$'}PATH\" command -v cargo && " +
+            "PATH=\"${TerminalEnvironmentContract.RUSTUP_BIN_DIR}:${'$'}PATH\" cargo --version"
     "uv" ->
         "PATH=\"${TerminalEnvironmentContract.PIPX_BIN_DIR}:${'$'}PATH\" command -v uv && " +
             "PATH=\"${TerminalEnvironmentContract.PIPX_BIN_DIR}:${'$'}PATH\" uv --version"

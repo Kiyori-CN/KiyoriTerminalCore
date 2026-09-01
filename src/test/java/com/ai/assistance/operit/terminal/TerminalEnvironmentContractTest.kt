@@ -94,6 +94,15 @@ class TerminalEnvironmentContractTest {
     }
 
     @Test
+    fun nodeInstallerIsReusableAsThePnpmPrerequisite() {
+        val command = TerminalEnvironmentContract.buildNodeJsInstallCommand()
+
+        assertTrue(command.contains("setup_24.x"))
+        assertTrue(command.contains("DEBIAN_FRONTEND=noninteractive"))
+        assertTrue(command.endsWith("apt-get install -y nodejs"))
+    }
+
+    @Test
     fun setupDetectionUsesOnlyTheAuthoritativeCompletionOutput() {
         val commandId = "environment-check"
         val sessionId = "terminal-session"

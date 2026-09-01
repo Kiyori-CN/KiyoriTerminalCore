@@ -13,7 +13,10 @@ class SetupEnvironmentProbeTest {
         assertTrue(packageCheckCommand(PackageItem("python3-pip", "", "python3-pip")).contains("python3 -m pip"))
         assertTrue(packageCheckCommand(PackageItem("uv", "", "pipx install uv")).contains("${'$'}HOME/.local/bin"))
         assertTrue(packageCheckCommand(PackageItem("rust", "", "RUST_INSTALL_COMMAND")).contains("${'$'}HOME/.cargo/bin"))
-        assertTrue(packageCheckCommand(PackageItem("nodejs", "", "node")).contains("node -v"))
+        val nodeCheck = packageCheckCommand(PackageItem("nodejs", "", "node"))
+        assertTrue(nodeCheck.contains("node -v"))
+        assertTrue(nodeCheck.contains("process.versions.node"))
+        assertTrue(nodeCheck.contains("npm --version"))
         assertTrue(packageCheckCommand(PackageItem("pnpm", "", "typescript")) == TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND)
     }
 
@@ -62,6 +65,28 @@ class SetupEnvironmentProbeTest {
 
         assertTrue(checkPackageInstalled(ready, packageItem))
         assertFalse(checkPackageInstalled(failed, packageItem))
+    }
+
+    @Test
+    fun selectingPnpmRequiresNodeWhenProbeDoesNotConfirmNode() {
+        assertTrue(
+            nodeJsRequiredByPnpm(
+                selectedPackages = mapOf("pnpm" to true),
+                packageStatus = mapOf("nodejs" to InstallStatus.NOT_INSTALLED),
+            ),
+        )
+        assertTrue(
+            nodeJsRequiredByPnpm(
+                selectedPackages = mapOf("pnpm" to true),
+                packageStatus = mapOf("nodejs" to InstallStatus.UNKNOWN),
+            ),
+        )
+        assertFalse(
+            nodeJsRequiredByPnpm(
+                selectedPackages = mapOf("pnpm" to true),
+                packageStatus = mapOf("nodejs" to InstallStatus.INSTALLED),
+            ),
+        )
     }
 
     @Test

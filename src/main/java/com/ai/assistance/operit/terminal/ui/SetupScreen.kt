@@ -409,6 +409,14 @@ fun SetupScreen(
                     val shouldInstallRust =
                         selectedPackages.getOrDefault("rust", false) &&
                             packageStatus["rust"] != InstallStatus.INSTALLED
+                    // pnpm is installed through npm, so selecting it must also provision a
+                    // usable Node.js runtime when the capability probe says Node is missing or
+                    // inconclusive. Otherwise the generated npm command fails immediately.
+                    val nodeJsRequiredByPnpm =
+                        nodeJsRequiredByPnpm(selectedPackages, packageStatus)
+                    if (nodeJsRequiredByPnpm && selectedPackages["nodejs"] != true) {
+                        selectedCustomCommands.add(TerminalEnvironmentContract.buildNodeJsInstallCommand())
+                    }
                     
                     packageCategories.forEach { category ->
                         category.packages.forEach { pkg ->
@@ -445,7 +453,10 @@ fun SetupScreen(
                             allAptDeps.add("curl")
                             allAptDeps.add("build-essential")
                         }
-                        if (selectedPackages.getOrDefault("nodejs", false)) {
+                        if (
+                            selectedPackages.getOrDefault("nodejs", false) ||
+                                nodeJsRequiredByPnpm
+                        ) {
                             allAptDeps.add("curl")
                         }
                     }
@@ -690,7 +701,11 @@ internal fun packageCheckCommand(pkg: PackageItem): String = when (pkg.id) {
     "uv" ->
         "PATH=\"${TerminalEnvironmentContract.PIPX_BIN_DIR}:${'$'}PATH\" command -v uv && " +
             "PATH=\"${TerminalEnvironmentContract.PIPX_BIN_DIR}:${'$'}PATH\" uv --version"
-    "nodejs" -> "node -v 2>/dev/null"
+    "nodejs" ->
+        "node -v >/dev/null 2>&1 && " +
+            "node -e \"process.exit(Number(process.versions.node.split('.')[0]) >= " +
+            "${TerminalEnvironmentContract.REQUIRED_NODE_MAJOR_VERSION} ? 0 : 1)\" >/dev/null 2>&1 && " +
+            "npm --version >/dev/null 2>&1"
     "pnpm" -> TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
     "go" -> "command -v go"
     "ssh" -> "command -v ssh"
@@ -801,6 +816,12 @@ internal fun packageProbeStatuses(
         pkg.id to if (packageValues?.size == 1) packageValues.single() else InstallStatus.UNKNOWN
     }
 }
+
+internal fun nodeJsRequiredByPnpm(
+    selectedPackages: Map<String, Boolean>,
+    packageStatus: Map<String, InstallStatus>,
+): Boolean =
+    selectedPackages["pnpm"] == true && packageStatus["nodejs"] != InstallStatus.INSTALLED
 
 /** 保留给旧测试和调用方的完成事件投影；进度事件不参与安装状态判定。 */
 internal fun completedCommandOutput(event: CommandExecutionEvent): String? =

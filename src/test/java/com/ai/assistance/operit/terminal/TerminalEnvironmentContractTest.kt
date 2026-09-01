@@ -61,6 +61,21 @@ class TerminalEnvironmentContractTest {
     }
 
     @Test
+    fun userLocalInstallPathsArePersistedAndActivatedInTheCurrentShell() {
+        assertEquals(
+            listOf(
+                "pipx ensurepath",
+                "export PATH=\"\$HOME/.local/bin:\$PATH\"",
+            ),
+            TerminalEnvironmentContract.PIPX_POST_INSTALL_COMMANDS,
+        )
+        assertEquals(
+            listOf("source \"\$HOME/.cargo/env\""),
+            TerminalEnvironmentContract.RUSTUP_POST_INSTALL_COMMANDS,
+        )
+    }
+
+    @Test
     fun nodeToolchainRequiresAnExactCompletionMarker() {
         val commandEcho = TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
 

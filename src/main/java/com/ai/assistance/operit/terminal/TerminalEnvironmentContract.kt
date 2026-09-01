@@ -9,8 +9,26 @@ package com.ai.assistance.operit.terminal
 object TerminalEnvironmentContract {
     internal const val NODE_TOOLCHAIN_READY_MARKER = "__KIYORI_NODE_TOOLCHAIN_READY__"
     internal const val REQUIRED_NODE_MAJOR_VERSION = 24
+    internal const val PIPX_BIN_DIR = "\$HOME/.local/bin"
+    internal const val RUSTUP_BIN_DIR = "\$HOME/.cargo/bin"
     private const val DEFAULT_NPM_REGISTRY = "https://registry.npmmirror.com/"
     private const val NONINTERACTIVE_APT_ENV = "DEBIAN_FRONTEND=noninteractive"
+
+    /**
+     * Hidden probes intentionally do not load profile files. Keep both the persistent profile
+     * update and the current visible shell's PATH activation explicit after user-local installs,
+     * otherwise a successful installer and the next capability probe observe different paths.
+     */
+    internal val PIPX_POST_INSTALL_COMMANDS =
+        listOf(
+            "pipx ensurepath",
+            "export PATH=\"$PIPX_BIN_DIR:\$PATH\"",
+        )
+
+    internal val RUSTUP_POST_INSTALL_COMMANDS =
+        listOf(
+            "source \"\$HOME/.cargo/env\"",
+        )
 
     /**
      * Environment setup is an unattended batch. Using apt-get with an explicit debconf frontend

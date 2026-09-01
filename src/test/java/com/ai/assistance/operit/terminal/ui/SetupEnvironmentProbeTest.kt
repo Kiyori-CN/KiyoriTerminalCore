@@ -12,6 +12,7 @@ class SetupEnvironmentProbeTest {
     fun packageChecksUseDeterministicCommands() {
         assertTrue(packageCheckCommand(PackageItem("python3-pip", "", "python3-pip")).contains("python3 -m pip"))
         assertTrue(packageCheckCommand(PackageItem("uv", "", "pipx install uv")).contains("${'$'}HOME/.local/bin"))
+        assertTrue(packageCheckCommand(PackageItem("rust", "", "RUST_INSTALL_COMMAND")).contains("${'$'}HOME/.cargo/bin"))
         assertTrue(packageCheckCommand(PackageItem("nodejs", "", "node")).contains("node -v"))
         assertTrue(packageCheckCommand(PackageItem("pnpm", "", "typescript")) == TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND)
     }
@@ -73,8 +74,8 @@ class SetupEnvironmentProbeTest {
         val result = HiddenExecResult(
             output = """
                 __KIYORI_ENV_PROBE_BEGIN__
-                __KIYORI_ENV_PROBE__:python3-pip1
-                __KIYORI_ENV_PROBE__:python3-venv0
+                __KIYORI_ENV_PROBE__:python3-pip:1
+                __KIYORI_ENV_PROBE__:python3-venv:0
                 __KIYORI_ENV_PROBE_END__
             """.trimIndent(),
             exitCode = 0,
@@ -87,17 +88,66 @@ class SetupEnvironmentProbeTest {
     }
 
     @Test
-    fun structuredProbeUsesOneFramedCommandForAllPackages() {
+    fun structuredProbeUsesPhysicalShellLinesForOneFramedCommand() {
         val packages = listOf(
             PackageItem("python-is-python3", "", "python-is-python3"),
             PackageItem("python3-pip", "", "python3-pip"),
             PackageItem("uv", "", "pipx install uv"),
         )
         val command = packageProbeCommand(packages)
+        val physicalLines = command.trimEnd('\n').lines()
 
         assertTrue(command.startsWith("printf '%s\\n' '__KIYORI_ENV_PROBE_BEGIN__'"))
+        assertEquals(packages.size + 2, physicalLines.size)
+        assertTrue(physicalLines.drop(1).dropLast(1).all { line -> line.startsWith("if (") })
         assertTrue(command.contains("if (python3 -m pip --version"))
         assertTrue(command.contains("if (PATH=\"${'$'}HOME/.local/bin:${'$'}PATH\""))
-        assertTrue(command.endsWith("printf '%s\\n' '__KIYORI_ENV_PROBE_END__'\\n"))
+        assertTrue(command.contains("__KIYORI_ENV_PROBE__:python3-pip' '1'"))
+        assertTrue(command.endsWith("printf '%s\\n' '__KIYORI_ENV_PROBE_END__'\n"))
+    }
+
+    @Test
+    fun structuredProbeRejectsDuplicateOrShellUnsafePackageIds() {
+        val duplicate = PackageItem("python3-pip", "", "python3-pip")
+        val unsafe = PackageItem("python3-pip;exit", "", "python3-pip")
+
+        assertTrue(runCatching { packageProbeCommand(listOf(duplicate, duplicate)) }.isFailure)
+        assertTrue(runCatching { packageProbeCommand(listOf(unsafe)) }.isFailure)
+    }
+
+    @Test
+    fun duplicateOrMalformedPackageEntriesRemainUnknown() {
+        val packages = listOf(
+            PackageItem("python3-pip", "", "python3-pip"),
+            PackageItem("uv", "", "pipx install uv"),
+        )
+        val result = HiddenExecResult(
+            output = """
+                __KIYORI_ENV_PROBE_BEGIN__
+                __KIYORI_ENV_PROBE__:python3-pip:1
+                __KIYORI_ENV_PROBE__:python3-pip:0
+                __KIYORI_ENV_PROBE__:uv:2
+                __KIYORI_ENV_PROBE_END__
+            """.trimIndent(),
+            exitCode = 0,
+        )
+
+        val statuses = packageProbeStatuses(result, packages)
+
+        assertEquals(InstallStatus.UNKNOWN, statuses["python3-pip"])
+        assertEquals(InstallStatus.UNKNOWN, statuses["uv"])
+    }
+
+    @Test
+    fun failedCommandOrIncompleteFrameNeverProjectsMissingPackages() {
+        val packages = listOf(PackageItem("python3-pip", "", "python3-pip"))
+        val failed = HiddenExecResult(
+            output = "__KIYORI_ENV_PROBE_BEGIN__\n__KIYORI_ENV_PROBE__:python3-pip:1",
+            exitCode = 2,
+        )
+        val incomplete = failed.copy(exitCode = 0)
+
+        assertEquals(InstallStatus.UNKNOWN, packageProbeStatuses(failed, packages)["python3-pip"])
+        assertEquals(InstallStatus.UNKNOWN, packageProbeStatuses(incomplete, packages)["python3-pip"])
     }
 }

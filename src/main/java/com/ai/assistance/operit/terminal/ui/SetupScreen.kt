@@ -403,6 +403,12 @@ fun SetupScreen(
                     val selectedAptPackages = mutableListOf<String>()
                     val selectedNpmPackages = mutableListOf<String>()
                     val selectedCustomCommands = mutableListOf<String>()
+                    val shouldInstallUv =
+                        selectedPackages.getOrDefault("uv", false) &&
+                            packageStatus["uv"] != InstallStatus.INSTALLED
+                    val shouldInstallRust =
+                        selectedPackages.getOrDefault("rust", false) &&
+                            packageStatus["rust"] != InstallStatus.INSTALLED
                     
                     packageCategories.forEach { category ->
                         category.packages.forEach { pkg ->
@@ -426,7 +432,7 @@ fun SetupScreen(
                     }
 
                     // 添加 pipx 作为 uv 的依赖
-                    if (selectedPackages.getOrDefault("uv", false) && packageStatus["uv"] != InstallStatus.INSTALLED) {
+                    if (shouldInstallUv) {
                         selectedAptPackages.add("pipx")
                     }
 
@@ -435,7 +441,7 @@ fun SetupScreen(
                     
                     // 添加自定义命令的依赖
                     if (selectedCustomCommands.isNotEmpty()) {
-                        if (selectedPackages.getOrDefault("rust", false)) {
+                        if (shouldInstallRust) {
                             allAptDeps.add("curl")
                             allAptDeps.add("build-essential")
                         }
@@ -456,10 +462,13 @@ fun SetupScreen(
                     if (selectedCustomCommands.isNotEmpty()) {
                         commands.addAll(selectedCustomCommands)
 
-                        // 如果安装了 uv，则需要确保 pipx 路径可用
-                        if (selectedPackages.getOrDefault("uv", false)) {
-                            commands.add("pipx ensurepath")
-                            commands.add("source ~/.profile")
+                        // 持久化未来 shell 的 PATH，并显式激活当前安装会话；不要依赖重新加载整份 profile。
+                        if (shouldInstallUv) {
+                            commands.addAll(TerminalEnvironmentContract.PIPX_POST_INSTALL_COMMANDS)
+                        }
+                        // rustup 把工具链放在用户目录，当前 shell 必须与后续 hidden probe 使用同一路径。
+                        if (shouldInstallRust) {
+                            commands.addAll(TerminalEnvironmentContract.RUSTUP_POST_INSTALL_COMMANDS)
                         }
                     }
                     
@@ -675,8 +684,12 @@ private fun PackageItem(
 }
 
 internal fun packageCheckCommand(pkg: PackageItem): String = when (pkg.id) {
-    "rust" -> "command -v rustc"
-    "uv" -> "PATH=\"${'$'}HOME/.local/bin:${'$'}PATH\" command -v uv && PATH=\"${'$'}HOME/.local/bin:${'$'}PATH\" uv --version"
+    "rust" ->
+        "PATH=\"${TerminalEnvironmentContract.RUSTUP_BIN_DIR}:${'$'}PATH\" command -v rustc && " +
+            "PATH=\"${TerminalEnvironmentContract.RUSTUP_BIN_DIR}:${'$'}PATH\" rustc --version"
+    "uv" ->
+        "PATH=\"${TerminalEnvironmentContract.PIPX_BIN_DIR}:${'$'}PATH\" command -v uv && " +
+            "PATH=\"${TerminalEnvironmentContract.PIPX_BIN_DIR}:${'$'}PATH\" uv --version"
     "nodejs" -> "node -v 2>/dev/null"
     "pnpm" -> TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
     "go" -> "command -v go"
@@ -718,25 +731,33 @@ internal fun checkPackageInstalled(result: HiddenExecResult, pkg: PackageItem): 
 private const val PACKAGE_PROBE_BEGIN_MARKER = "__KIYORI_ENV_PROBE_BEGIN__"
 private const val PACKAGE_PROBE_ENTRY_PREFIX = "__KIYORI_ENV_PROBE__:"
 private const val PACKAGE_PROBE_END_MARKER = "__KIYORI_ENV_PROBE_END__"
+private val PACKAGE_PROBE_ID_PATTERN = Regex("[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")
+private val PACKAGE_PROBE_ENTRY_PATTERN =
+    Regex("^${Regex.escape(PACKAGE_PROBE_ENTRY_PREFIX)}(${PACKAGE_PROBE_ID_PATTERN.pattern}):([01])$")
 
 internal fun packageProbeCommand(packages: List<PackageItem>): String = buildString {
-    append("printf '%s\\n' '")
-    append(PACKAGE_PROBE_BEGIN_MARKER)
-    append("'\\n")
+    require(packages.map(PackageItem::id).distinct().size == packages.size) {
+        "Environment probe package IDs must be unique"
+    }
+    require(packages.all { pkg -> PACKAGE_PROBE_ID_PATTERN.matches(pkg.id) }) {
+        "Environment probe package IDs must use lowercase letters, digits, and hyphens"
+    }
+
+    appendLine("printf '%s\\n' '$PACKAGE_PROBE_BEGIN_MARKER'")
     packages.forEach { pkg ->
         append("if (")
         append(packageCheckCommand(pkg))
-        append(") >/dev/null 2>&1; then printf '%s1\\n' '")
+        append(") >/dev/null 2>&1; then printf '%s:%s\\n' '")
         append(PACKAGE_PROBE_ENTRY_PREFIX)
         append(pkg.id)
-        append("'; else printf '%s0\\n' '")
+        append("' '1'; else printf '%s:%s\\n' '")
         append(PACKAGE_PROBE_ENTRY_PREFIX)
         append(pkg.id)
-        append("'; fi\\n")
+        appendLine("' '0'; fi")
     }
-    append("printf '%s\\n' '")
-    append(PACKAGE_PROBE_END_MARKER)
-    append("'\\n")
+    // These must be physical LF separators. A literal backslash-n is folded into the neighboring
+    // shell token and makes the complete script fail before either protocol marker can be emitted.
+    appendLine("printf '%s\\n' '$PACKAGE_PROBE_END_MARKER'")
 }
 
 internal fun packageProbeStatuses(
@@ -748,21 +769,37 @@ internal fun packageProbeStatuses(
     }
 
     val lines = result.output.lineSequence().map(String::trim).toList()
-    if (PACKAGE_PROBE_BEGIN_MARKER !in lines || PACKAGE_PROBE_END_MARKER !in lines) {
+    val beginIndexes = lines.indices.filter { index -> lines[index] == PACKAGE_PROBE_BEGIN_MARKER }
+    val endIndexes = lines.indices.filter { index -> lines[index] == PACKAGE_PROBE_END_MARKER }
+    if (beginIndexes.size != 1 || endIndexes.size != 1 || beginIndexes.single() >= endIndexes.single()) {
         return packages.associate { pkg -> pkg.id to InstallStatus.UNKNOWN }
     }
     val expectedIds = packages.map(PackageItem::id).toSet()
-    val values = lines.mapNotNull { line ->
-        when {
-            line.startsWith(PACKAGE_PROBE_ENTRY_PREFIX) && line.endsWith('0') ->
-                line.removePrefix(PACKAGE_PROBE_ENTRY_PREFIX).dropLast(1) to InstallStatus.NOT_INSTALLED
-            line.startsWith(PACKAGE_PROBE_ENTRY_PREFIX) && line.endsWith('1') ->
-                line.removePrefix(PACKAGE_PROBE_ENTRY_PREFIX).dropLast(1) to InstallStatus.INSTALLED
-            else -> null
-        }
-    }.filter { (id, _) -> id in expectedIds }.toMap()
+    val values =
+        lines
+            .subList(beginIndexes.single() + 1, endIndexes.single())
+            .mapNotNull { line ->
+                PACKAGE_PROBE_ENTRY_PATTERN.matchEntire(line)?.let { match ->
+                    val id = match.groupValues[1]
+                    val status =
+                        if (match.groupValues[2] == "1") {
+                            InstallStatus.INSTALLED
+                        } else {
+                            InstallStatus.NOT_INSTALLED
+                        }
+                    id to status
+                }
+            }
+            .filter { (id, _) -> id in expectedIds }
+            .groupBy(
+                keySelector = Pair<String, InstallStatus>::first,
+                valueTransform = Pair<String, InstallStatus>::second,
+            )
 
-    return packages.associate { pkg -> pkg.id to (values[pkg.id] ?: InstallStatus.UNKNOWN) }
+    return packages.associate { pkg ->
+        val packageValues = values[pkg.id]
+        pkg.id to if (packageValues?.size == 1) packageValues.single() else InstallStatus.UNKNOWN
+    }
 }
 
 /** 保留给旧测试和调用方的完成事件投影；进度事件不参与安装状态判定。 */

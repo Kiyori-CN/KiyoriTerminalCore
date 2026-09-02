@@ -42,7 +42,7 @@ class OrderedCommandExecutionEventDispatcherTest {
                 CommandExecutionEvent(
                     commandId = commandId,
                     sessionId = sessionId,
-                    outputChunk = "line-0\nline-1\n...line-24",
+                    outputChunk = "",
                     isCompleted = true,
                     exitCode = 0,
                 )

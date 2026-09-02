@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.terminal
 
 import com.ai.assistance.operit.terminal.view.domain.shouldFinishCommandOnPrompt
+import com.ai.assistance.operit.terminal.data.SessionInitState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -8,6 +9,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CommandExitMarkerTest {
+    @Test
+    fun completionEventsNeverCarryAHistorySnapshot() {
+        val event = completedCommandExecutionEvent(
+            commandId = "command-id",
+            sessionId = "session-id",
+            exitCode = 0,
+        )
+
+        assertTrue(event.isCompleted)
+        assertEquals("", event.outputChunk)
+        assertEquals(0, event.exitCode)
+    }
+
     @Test
     fun parsesSuccessfulAndFailedStatuses() {
         assertEquals(0, CommandExitMarker.parse("\u001B]1337;${CommandExitMarker.PREFIX}123e4567-e89b-12d3-a456-426614174000:0\u0007"))
@@ -80,10 +94,98 @@ class CommandExitMarkerTest {
     }
 
     @Test
+    fun removesOnlyTheExpectedStatusMarkerAndPreservesAdjacentOutput() {
+        val commandId = "123e4567-e89b-12d3-a456-426614174000"
+        val marker = "\u001B]1337;${CommandExitMarker.PREFIX}${commandId}:0\u0007"
+
+        assertEquals(
+            "prefix-without-newline\"suffix",
+            CommandExitMarker.remove(
+                "prefix-without-newline\"$marker" + "suffix",
+                expectedCommandId = commandId,
+            ),
+        )
+    }
+
+    @Test
+    fun doesNotRemoveAStatusMarkerBelongingToAnotherCommand() {
+        val marker = "${CommandExitMarker.PREFIX}123e4567-e89b-12d3-a456-426614174000:0"
+
+        assertEquals(
+            "before$marker-after",
+            CommandExitMarker.remove(
+                "before$marker-after",
+                expectedCommandId = "different-command",
+            ),
+        )
+    }
+
+    @Test
     fun intermediatePromptCannotCompleteWrappedCommandBeforeExitMarker() {
         assertFalse(shouldFinishCommandOnPrompt(commandExecuting = true, exitCode = null))
         assertTrue(shouldFinishCommandOnPrompt(commandExecuting = true, exitCode = 0))
         assertTrue(shouldFinishCommandOnPrompt(commandExecuting = true, exitCode = -1))
         assertTrue(shouldFinishCommandOnPrompt(commandExecuting = false, exitCode = null))
+        assertTrue(
+            shouldFinishCommandOnPrompt(
+                commandExecuting = true,
+                exitCode = null,
+                cancellationRequested = true,
+            )
+        )
+    }
+
+    @Test
+    fun cancelledCommandIsSettledWhenQueueAdvancesToAnotherCommand() {
+        assertTrue(
+            isTargetCommandSettled(
+                targetCommandId = "timed-out",
+                currentCommandId = "next-command",
+                currentCommandExecuting = true,
+            )
+        )
+    }
+
+    @Test
+    fun executingTargetCommandIsNotSettled() {
+        assertFalse(
+            isTargetCommandSettled(
+                targetCommandId = "timed-out",
+                currentCommandId = "timed-out",
+                currentCommandExecuting = true,
+            )
+        )
+    }
+
+    @Test
+    fun sessionIsReadyOnlyWhenStateWriterAndProcessBelongToALiveRuntime() {
+        assertTrue(
+            isTerminalRuntimeReady(
+                initState = SessionInitState.READY,
+                writerAvailable = true,
+                processAlive = true,
+            )
+        )
+        assertFalse(
+            isTerminalRuntimeReady(
+                initState = SessionInitState.INITIALIZING,
+                writerAvailable = true,
+                processAlive = true,
+            )
+        )
+        assertFalse(
+            isTerminalRuntimeReady(
+                initState = SessionInitState.READY,
+                writerAvailable = false,
+                processAlive = true,
+            )
+        )
+        assertFalse(
+            isTerminalRuntimeReady(
+                initState = SessionInitState.READY,
+                writerAvailable = true,
+                processAlive = false,
+            )
+        )
     }
 }

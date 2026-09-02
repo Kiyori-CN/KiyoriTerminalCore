@@ -13,7 +13,9 @@ This file defines stable repository terminology and compatibility boundaries. Ta
 
 - `TerminalManager` owns terminal sessions and exposes terminal state through Kotlin Flows. Command
   execution events are published through one FIFO dispatcher, so a command's start and output events
-  always arrive before its completion event; consumers may stop at completion without losing output.
+  always arrive before its completion event. Non-completion events are the sole command-body source;
+  completion events carry an empty body plus the authoritative exit code, so bounded UI history can
+  never overwrite a complete incremental transcript.
 - `TerminalService` exposes terminal operations to other processes.
 - `ITerminalService.aidl` and `ITerminalCallback.aidl` define the IPC contract.
 - The module is an Android library. Application branding, release distribution, and update ownership belong to the Kiyori parent project.
@@ -35,6 +37,12 @@ KiyoriTerminalCore does not poll an independent upstream application-update chan
 - Node.js setup installs Node.js 24 before `pnpm` and global TypeScript when `pnpm` is selected as a dependency. The shared readiness contract requires a usable Node 24 runtime and npm, resolves `npm prefix -g`, and invokes the installed `pnpm` and `tsc` from that exact bin, so visible and hidden sessions do not depend on profile-specific `PATH` state.
 - Hidden command probes bootstrap the same Ubuntu rootfs before starting a persistent `/bin/bash --noprofile --norc -s` stdin shell. The `-s` mode is required because a non-interactive Bash without a script exits immediately when its stdin is a pipe; a dead hidden shell must never be reported as a successful probe.
 - Visible command envelopes emit an ANSI OSC `1337` payload containing `__KIYORI_COMMAND_EXIT__:<uuid>:<exit-code>`; the payload is consumed by the terminal parser and is not rendered as text. A session-level display filter carries incomplete OSC data across PTY read chunks so a split marker suffix cannot leak into the canvas. The exit code is the authoritative completion status and is accepted only when its command ID matches the currently executing command. The parser still accepts the historical `__OPERIT_COMMAND_EXIT__` text marker for sessions started by older builds.
+- Visible command cancellation targets one exact command ID. If Ctrl+C reaches a prompt, that prompt
+  settles the cancelled command even when its trailing OSC envelope was interrupted. If cancellation,
+  a writer failure, or PTY EOF cannot prove a usable command boundary, `TerminalManager` replaces the
+  PTY under the same logical session ID and increments its shell generation. Queued commands remain in
+  FIFO order and resume only after the replacement reaches `READY`; a rebuilt shell resets cwd,
+  exported variables, and other process-local context.
 - Startup permission repair remains idempotent, but its progress text is emitted only when an Android group is actually added to the Ubuntu rootfs; reopening an already repaired terminal is silent.
 - Environment Setup sends unattended `dpkg`/`apt-get` steps with `DEBIAN_FRONTEND=noninteractive`; selected mirror IDs are validated against the current catalog and stale custom-source IDs are repaired to the built-in default before script generation.
 - Environment Setup probes all package rows through one structured hidden command. Its generated Bash script uses physical LF statement boundaries and emits exactly one framed `__KIYORI_ENV_PROBE__:<package-id>:<0|1>` record per package; a failed command, incomplete frame, or missing/duplicate/malformed package record projects as `UNKNOWN`/'Unable to detect' rather than an incorrect installed state. Python readiness is capability-based (`python` and `python3` resolve to the same target, `python3 -m venv`, and `python3 -m pip`); Debian status parsing accepts the exact `dpkg-query` value `install ok installed`. Hidden probes resolve pipx and rustup tools through `$HOME/.local/bin` and `$HOME/.cargo/bin` explicitly because their non-profile shell must not depend on interactive `PATH` state. Setup persists pipx's future-shell path and activates that bin in the current visible shell; rustup setup sources only its generated `$HOME/.cargo/env` after a successful install.

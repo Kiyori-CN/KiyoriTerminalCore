@@ -11,6 +11,8 @@ import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineStart
 import java.nio.file.Paths
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
@@ -21,7 +23,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.first
 import com.ai.assistance.operit.terminal.data.TerminalState
 import com.ai.assistance.operit.terminal.data.CommandHistoryItem
 import com.ai.assistance.operit.terminal.data.QueuedCommand
@@ -31,7 +33,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.withLock
 import com.ai.assistance.operit.terminal.data.PackageManagerType
 import com.ai.assistance.operit.terminal.data.SessionInitState
@@ -49,6 +50,20 @@ import com.ai.assistance.operit.terminal.provider.type.LocalTerminalProvider
 import com.ai.assistance.operit.terminal.provider.type.SSHTerminalProvider
 import com.ai.assistance.operit.terminal.data.TerminalSessionData
 import com.ai.assistance.operit.terminal.view.domain.ansi.AnsiTerminalEmulator
+import com.ai.assistance.operit.terminal.completedCommandExecutionEvent
+
+data class CommandCancellationResult(
+    val commandFound: Boolean,
+    val settled: Boolean,
+    val sessionHealthy: Boolean,
+    val sessionRecovered: Boolean,
+    val contextPreserved: Boolean,
+)
+
+private data class CommandSubmissionFailure(
+    val terminalSession: TerminalSession?,
+    val shellGeneration: Long,
+)
 
 class TerminalManager private constructor(
     private val application: Application
@@ -64,6 +79,7 @@ class TerminalManager private constructor(
     private val nativeLibDir: String = application.applicationInfo.nativeLibraryDir
     private val activeSessions = ConcurrentHashMap<String, TerminalSession>()
     private val closingSessions = ConcurrentHashMap.newKeySet<String>()
+    private val sessionRecoveryMutexes = ConcurrentHashMap<String, Mutex>()
     
     // SharedPreferences for reading settings
     private val prefs = application.getSharedPreferences("terminal_settings", Context.MODE_PRIVATE)
@@ -133,6 +149,8 @@ class TerminalManager private constructor(
         private const val MAX_HISTORY_ITEMS = 500
         private const val MAX_OUTPUT_LINES_PER_ITEM = 1000
         private const val TERMINAL_ENTER = "\r"
+        private const val SESSION_READY_TIMEOUT_MS = 180_000L
+        private const val SESSION_CLOSE_SETTLE_TIMEOUT_MS = 3_000L
     }
 
     init {
@@ -184,18 +202,20 @@ class TerminalManager private constructor(
         // Ubuntu rootfs is extracted on-device before the PTY can reach READY.  Thirty seconds
         // is shorter than a normal first install on slower Android storage and caused the only
         // default session to be closed permanently, leaving setup with no target session.
-        val success = withTimeoutOrNull(180_000L) { // 3分钟超时
+        val initState = withTimeoutOrNull(SESSION_READY_TIMEOUT_MS) { // 3分钟超时
             terminalState.first { state ->
                 val session = state.sessions.find { it.id == newSession.id }
-                session?.initState == com.ai.assistance.operit.terminal.data.SessionInitState.READY
-            }
+                session?.initState == SessionInitState.READY || session?.initState == SessionInitState.FAILED
+            }.sessions.find { it.id == newSession.id }?.initState
         }
 
-        if (success == null) {
-            Log.e(TAG, "Session initialization timeout for session: ${newSession.id}")
+        if (initState != SessionInitState.READY) {
+            Log.e(TAG, "Session initialization failed for session: ${newSession.id}, state=$initState")
             // 初始化失败，移除会话
             sessionManager.closeSession(newSession.id)
-            throw Exception("Session initialization timeout")
+            throw Exception(
+                if (initState == null) "Session initialization timeout" else "Session initialization failed"
+            )
         }
 
         Log.d(TAG, "Session ${newSession.id} initialized successfully")
@@ -221,6 +241,7 @@ class TerminalManager private constructor(
      */
     fun onSessionClosed(sessionId: String) {
         outputProcessor.clearSessionState(sessionId)
+        sessionRecoveryMutexes.remove(sessionId)
     }
     
     /**
@@ -311,17 +332,7 @@ class TerminalManager private constructor(
             return actualCommandId
         }
 
-        session.commandMutex.withLock {
-            if (session.currentExecutingCommand?.isExecuting == true) {
-                // 有命令正在执行，将新命令加入队列
-                session.commandQueue.add(QueuedCommand(actualCommandId, command))
-                Log.d(TAG, "Command queued: $command (id: $actualCommandId). Queue size: ${session.commandQueue.size}")
-            } else {
-                // 没有命令在执行，直接执行
-                executeCommandInternal(command, session, actualCommandId)
-            }
-        }
-        return actualCommandId
+        return sendCommandToSession(session.id, command, actualCommandId)
     }
 
     /**
@@ -329,30 +340,106 @@ class TerminalManager private constructor(
      */
     suspend fun sendCommandToSession(sessionId: String, command: String, commandId: String? = null): String {
         val actualCommandId = commandId ?: UUID.randomUUID().toString()
-        val session = sessionManager.getSession(sessionId) ?: return actualCommandId
+        while (true) {
+            val observedSession = sessionManager.getSession(sessionId)
+                ?: throw IllegalArgumentException("Terminal session does not exist: $sessionId")
 
-        // 如果会话在交互模式，直接发送输入（不创建命令历史）
-        if (session.isInteractiveMode) {
-            Log.d(TAG, "Session $sessionId in interactive mode, sending as input: $command")
-            try {
-                writeInputToKernel(session, command + TERMINAL_ENTER, "interactive-session-command")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending input to session $sessionId", e)
+            // A logical session survives PTY replacement. Wait for the authoritative generation
+            // instead of retaining a writer observed before an EOF/recovery state transition.
+            if (!isSessionRuntimeReady(observedSession)) {
+                if (!ensureSessionReady(sessionId, SESSION_READY_TIMEOUT_MS)) {
+                    throw IllegalStateException("Terminal session is not ready: $sessionId")
+                }
+                continue
+            }
+
+            var retryAfterReadinessCheck = false
+            var submissionFailure: CommandSubmissionFailure? = null
+            observedSession.commandMutex.withLock {
+                val session = sessionManager.getSession(sessionId)
+                    ?: throw IllegalArgumentException("Terminal session does not exist: $sessionId")
+                if (!isSessionRuntimeReady(session)) {
+                    retryAfterReadinessCheck = true
+                    return@withLock
+                }
+
+                // Batch execution always needs a commandId-scoped envelope. Interactive replies
+                // use terminal_input; raw input here would leave the event collector hanging.
+                if (session.isInteractiveMode) {
+                    throw IllegalStateException(
+                        "Terminal session is awaiting interactive input; use terminal_input: $sessionId"
+                    )
+                }
+
+                if (session.currentExecutingCommand?.isExecuting == true) {
+                    session.commandQueue.add(QueuedCommand(actualCommandId, command))
+                    Log.d(TAG, "Command queued for session $sessionId: $command (id: $actualCommandId). Queue size: ${session.commandQueue.size}")
+                } else {
+                    submissionFailure = executeCommandInternal(command, session, actualCommandId)
+                }
+            }
+
+            if (retryAfterReadinessCheck) {
+                continue
+            }
+            submissionFailure?.let { failure ->
+                recoverAfterCommandWriteFailure(sessionId, failure)
             }
             return actualCommandId
         }
+    }
 
-        session.commandMutex.withLock {
-            if (session.currentExecutingCommand?.isExecuting == true) {
-                // 有命令正在执行，将新命令加入队列
-                session.commandQueue.add(QueuedCommand(actualCommandId, command))
-                Log.d(TAG, "Command queued for session $sessionId: $command (id: $actualCommandId). Queue size: ${session.commandQueue.size}")
-            } else {
-                // 没有命令在执行，直接执行
-                executeCommandInternal(command, session, actualCommandId)
-            }
+    suspend fun awaitSessionReady(sessionId: String, timeoutMs: Long = SESSION_READY_TIMEOUT_MS): Boolean {
+        val current = sessionManager.getSession(sessionId) ?: return false
+        if (isSessionRuntimeReady(current)) {
+            return true
         }
-        return actualCommandId
+        return withTimeoutOrNull(timeoutMs) {
+            terminalState.first { state ->
+                val session = state.sessions.find { it.id == sessionId }
+                session == null || session.initState == SessionInitState.READY ||
+                    session.initState == SessionInitState.FAILED
+            }
+            val ready = sessionManager.getSession(sessionId)
+            ready != null && isSessionRuntimeReady(ready)
+        } ?: false
+    }
+
+    suspend fun ensureSessionReady(sessionId: String, timeoutMs: Long = SESSION_READY_TIMEOUT_MS): Boolean {
+        val session = sessionManager.getSession(sessionId) ?: return false
+        if (isSessionRuntimeReady(session)) {
+            return true
+        }
+        if (session.initState == SessionInitState.FAILED ||
+            (session.initState == SessionInitState.READY && !isSessionRuntimeReady(session))
+        ) {
+            return recoverSession(
+                sessionId = sessionId,
+                expectedSession = session.terminalSession,
+                expectedGeneration = session.shellGeneration,
+                reason = "session requested without a live PTY",
+            )
+        }
+        return awaitSessionReady(sessionId, timeoutMs)
+    }
+
+    suspend fun awaitCommandSettlement(sessionId: String, commandId: String, timeoutMs: Long): Boolean {
+        return withTimeoutOrNull(timeoutMs) {
+            var commandSettled = false
+            while (!commandSettled) {
+                val session = sessionManager.getSession(sessionId) ?: return@withTimeoutOrNull false
+                val current = session.currentExecutingCommand
+                commandSettled = isTargetCommandSettled(
+                    targetCommandId = commandId,
+                    currentCommandId = current?.id,
+                    currentCommandExecuting = current?.isExecuting == true,
+                )
+                if (!commandSettled) {
+                    delay(25L)
+                }
+            }
+            true
+        } ?: false
     }
 
     /**
@@ -367,29 +454,34 @@ class TerminalManager private constructor(
         timeoutMs: Long = 1_800_000L
     ): CommandExecutionEvent? {
         val commandId = UUID.randomUUID().toString()
-        val collectorReady = CompletableDeferred<Unit>()
         val completed = CompletableDeferred<CommandExecutionEvent>()
-        val collector = coroutineScope.launch {
+        val output = StringBuilder()
+        // SharedFlow has no replay. UNDISPATCHED runs through subscription registration before the
+        // command can publish a fast start/output/completion sequence.
+        val collector = coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
             commandExecutionEvents
                 .filter { event -> event.sessionId == sessionId && event.commandId == commandId }
-                .onStart { collectorReady.complete(Unit) }
                 .collect { event ->
-                    if (event.isCompleted && !completed.isCompleted) {
-                        completed.complete(event)
+                    if (event.isCompleted) {
+                        if (!completed.isCompleted) {
+                            // Return a local snapshot for setup callers without putting the body
+                            // back into the shared completion event protocol.
+                            completed.complete(event.copy(outputChunk = output.toString()))
+                        }
+                    } else {
+                        output.append(event.outputChunk)
                     }
                 }
         }
 
         return try {
-            collectorReady.await()
+            // Use the same runtime-ready gate as normal command submission. A stale READY state
+            // with a dead writer/process must trigger the existing same-session recovery instead
+            // of returning null and leaving environment setup without its command result.
             val ready = withTimeoutOrNull(180_000L) {
-                terminalState.first { state ->
-                    state.sessions.any { session ->
-                        session.id == sessionId && session.initState == SessionInitState.READY
-                    }
-                }
-            }
-            if (ready == null) {
+                ensureSessionReady(sessionId, SESSION_READY_TIMEOUT_MS)
+            } == true
+            if (!ready) {
                 Log.e(TAG, "Timed out waiting for terminal session to become ready: $sessionId")
                 null
             } else {
@@ -397,16 +489,30 @@ class TerminalManager private constructor(
                 if (session == null) {
                     Log.e(TAG, "Cannot execute command in missing terminal session: $sessionId")
                     null
-                } else if (session.sessionWriter == null) {
-                    Log.e(TAG, "Cannot execute command before terminal writer is ready: $sessionId")
-                    null
                 } else if (session.isInteractiveMode) {
                     Log.e(TAG, "Cannot execute batch command while session awaits interactive input: $sessionId")
                     null
                 } else {
                     try {
                         sendCommandToSession(sessionId, command, commandId)
-                        withTimeoutOrNull(timeoutMs) { completed.await() }
+                        val completedWithinDeadline = withTimeoutOrNull(timeoutMs) { completed.await() }
+                        if (completedWithinDeadline != null) {
+                            completedWithinDeadline
+                        } else {
+                            Log.w(TAG, "Command execution timed out after ${timeoutMs}ms: $commandId")
+                            try {
+                                cancelCommand(
+                                    sessionId = sessionId,
+                                    commandId = commandId,
+                                    settleTimeoutMs = SESSION_CLOSE_SETTLE_TIMEOUT_MS,
+                                )
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                Log.e(TAG, "Failed to cancel timed-out command $commandId", error)
+                            }
+                            withTimeoutOrNull(SESSION_CLOSE_SETTLE_TIMEOUT_MS) { completed.await() }
+                        }
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Exception) {
@@ -424,43 +530,72 @@ class TerminalManager private constructor(
      * 处理队列中的下一个命令
      */
     private suspend fun processNextQueuedCommand(sessionId: String) {
-        val session = sessionManager.getSession(sessionId) ?: return
-
-        session.commandMutex.withLock {
+        val observedSession = sessionManager.getSession(sessionId) ?: return
+        var submissionFailure: CommandSubmissionFailure? = null
+        observedSession.commandMutex.withLock {
+            val session = sessionManager.getSession(sessionId) ?: return@withLock
             if (session.currentExecutingCommand?.isExecuting == true) {
                 Log.w(TAG, "processNextQueuedCommand called, but a command is still executing. This should not happen.")
+                return@withLock
+            }
+
+            // Recovery owns queue resumption. Leaving the head in place here prevents an old EOF
+            // callback or a duplicate completion signal from writing it through a stale writer.
+            if (!isSessionRuntimeReady(session)) {
                 return@withLock
             }
 
             if (session.commandQueue.isNotEmpty()) {
                 val nextCommand = session.commandQueue.removeAt(0)
                 Log.d(TAG, "Processing next queued command: ${nextCommand.command} (id: ${nextCommand.id}). Queue size: ${session.commandQueue.size}")
-                executeCommandInternal(nextCommand.command, session, nextCommand.id)
+                submissionFailure = executeCommandInternal(nextCommand.command, session, nextCommand.id)
             }
+        }
+        submissionFailure?.let { failure ->
+            recoverAfterCommandWriteFailure(sessionId, failure)
         }
     }
 
     /**
      * 内部执行命令的函数, 必须在 commandMutex 锁内部调用
      */
-    private suspend fun executeCommandInternal(command: String, session: TerminalSessionData, commandId: String) {
+    private fun executeCommandInternal(
+        command: String,
+        session: TerminalSessionData,
+        commandId: String,
+    ): CommandSubmissionFailure? {
         handleRegularCommand(command, session, commandId)
-        try {
+        return try {
             val wrappedCommand = buildCommandWithExitMarker(command, commandId)
             val fullInput = "$wrappedCommand$TERMINAL_ENTER"
             writeInputToKernel(session, fullInput, "command")
             Log.d(TAG, "Sent command to PTY: $command")
+            null
         } catch (e: Exception) {
             Log.e(TAG, "Error sending command", e)
-            // Do not leave a phantom executing command behind when the PTY
-            // writer has failed. That state would queue every later command
-            // forever while no prompt can arrive to finish this one.
-            session.currentExecutingCommand?.setExecuting(false)
-            session.currentExecutingCommand = null
-            session.currentCommandExitCode = null
-            session.currentCommandOutput.clear()
-            session.commandQueue.clear()
-            throw e
+            val failure = CommandSubmissionFailure(
+                terminalSession = session.terminalSession,
+                shellGeneration = session.shellGeneration,
+            )
+            // A broken writer cannot produce either the OSC envelope or a prompt. Complete only
+            // this command, preserve queued commandIds, then replace the failed PTY generation.
+            outputProcessor.abortCurrentCommandForRecovery(session.id, sessionManager)
+            failure
+        }
+    }
+
+    private suspend fun recoverAfterCommandWriteFailure(
+        sessionId: String,
+        failure: CommandSubmissionFailure,
+    ) {
+        val recovered = recoverSession(
+            sessionId = sessionId,
+            expectedSession = failure.terminalSession,
+            expectedGeneration = failure.shellGeneration,
+            reason = "command writer failed",
+        )
+        if (!recovered) {
+            Log.e(TAG, "Failed to recover terminal session $sessionId after command writer failure")
         }
     }
 
@@ -502,8 +637,13 @@ class TerminalManager private constructor(
             try {
                 val currentSession = sessionManager.getCurrentSession()
                 currentSession?.let {
-                    writeInputToKernel(it, "\u0003", "interrupt")
-                    Log.d(TAG, "Sent interrupt signal (Ctrl+C) to session ${it.id}")
+                    val commandId = it.currentExecutingCommand?.takeIf { command -> command.isExecuting }?.id
+                    if (commandId == null) {
+                        writeInputToKernel(it, "\u0003", "interrupt")
+                        Log.d(TAG, "Sent interrupt signal (Ctrl+C) to idle session ${it.id}")
+                    } else {
+                        cancelCommand(it.id, commandId, SESSION_CLOSE_SETTLE_TIMEOUT_MS)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending interrupt signal", e)
@@ -516,26 +656,23 @@ class TerminalManager private constructor(
             val success = initializeEnvironment()
             if (success) {
                 startSession(sessionId)
+            } else {
+                markSessionFailed(sessionId, "terminal environment initialization failed")
             }
         }
     }
 
-    private fun startSession(sessionId: String) {
-        coroutineScope.launch(Dispatchers.IO) {
+    private suspend fun startSession(sessionId: String) {
+        withContext(Dispatchers.IO) {
             try {
-                Log.d(TAG, "Starting session...")
+                Log.d(TAG, "Starting session $sessionId")
                 closingSessions.remove(sessionId)
 
-                // 获取单例的终端提供者
                 val provider = getTerminalProvider()
-
-                // 启动终端会话
-                val result = provider.startSession(sessionId)
-                val (terminalSession, pty) = result.getOrThrow()
+                val (terminalSession, pty) = provider.startSession(sessionId).getOrThrow()
                 val sessionWriter = terminalSession.stdin.writer()
 
-                // 启动读取协程
-                val readJob = launch {
+                val readJob = coroutineScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                     var reachedEof = false
                     try {
                         terminalSession.stdout.use { inputStream ->
@@ -556,13 +693,16 @@ class TerminalManager private constructor(
                         if (closingSessions.remove(sessionId)) {
                             return@launch
                         }
+                        val boundSession = sessionManager.getSession(sessionId)
+                        if (boundSession?.terminalSession !== terminalSession) {
+                            return@launch
+                        }
                         if (reachedEof || !terminalSession.process.isAlive) {
                             handleTerminalSessionExit(sessionId, terminalSession)
                         }
                     }
                 }
 
-                // 更新会话信息
                 sessionManager.updateSession(sessionId) { session ->
                     session.copy(
                         terminalSession = terminalSession,
@@ -571,17 +711,15 @@ class TerminalManager private constructor(
                         readJob = readJob
                     )
                 }
+                readJob.start()
             } catch (e: Exception) {
-                Log.e(TAG, "Error starting session", e)
+                Log.e(TAG, "Error starting session $sessionId", e)
+                markSessionFailed(sessionId, e.message ?: "terminal session start failed")
             }
         }
     }
 
-    private fun handleTerminalSessionExit(sessionId: String, terminalSession: TerminalSession) {
-        if (sessionManager.getSession(sessionId) == null) {
-            return
-        }
-
+    private suspend fun handleTerminalSessionExit(sessionId: String, terminalSession: TerminalSession) {
         val exitCode =
             if (terminalSession.process.isAlive) {
                 -1
@@ -594,11 +732,161 @@ class TerminalManager private constructor(
             }
 
         Log.i(TAG, "Terminal session $sessionId exited with code $exitCode")
-        outputProcessor.handleSessionExit(
-            sessionId = sessionId,
-            message = application.getString(R.string.terminal_exited_with_code, exitCode),
-            sessionManager = sessionManager
-        )
+        val observedSession = sessionManager.getSession(sessionId) ?: return
+        var handledExit = false
+        var wasReady = false
+        var expectedGeneration = observedSession.shellGeneration
+        observedSession.commandMutex.withLock {
+            val session = sessionManager.getSession(sessionId) ?: return@withLock
+            if (session.terminalSession !== terminalSession) {
+                return@withLock
+            }
+
+            handledExit = true
+            wasReady = session.initState == SessionInitState.READY
+            expectedGeneration = session.shellGeneration
+            outputProcessor.handleSessionExit(
+                sessionId = sessionId,
+                message = application.getString(R.string.terminal_exited_with_code, exitCode),
+                sessionManager = sessionManager
+            )
+            // Invalidate the dead writer under the same mutex used by command submission. A new
+            // command can only observe INITIALIZING or the next READY shell generation.
+            sessionManager.updateSession(sessionId) {
+                it.copy(
+                    sessionWriter = null,
+                    initState = SessionInitState.INITIALIZING,
+                    isInteractiveMode = false,
+                    interactivePrompt = "",
+                )
+            }
+        }
+        if (!handledExit) {
+            return
+        }
+        if (wasReady) {
+            coroutineScope.launch {
+                recoverSession(
+                    sessionId = sessionId,
+                    expectedSession = terminalSession,
+                    expectedGeneration = expectedGeneration,
+                    reason = "process exited with code $exitCode",
+                )
+            }
+        } else {
+            markSessionFailed(sessionId, "terminal process exited before READY with code $exitCode")
+        }
+    }
+
+    private suspend fun recoverSession(
+        sessionId: String,
+        expectedSession: TerminalSession?,
+        expectedGeneration: Long,
+        reason: String,
+    ): Boolean {
+        val mutex = sessionRecoveryMutexes.computeIfAbsent(sessionId) { Mutex() }
+        var shouldResumeQueue = false
+        val ready = mutex.withLock recoveryLock@{
+            val session = sessionManager.getSession(sessionId) ?: return@recoveryLock false
+            val liveAndReady = isSessionRuntimeReady(session)
+            if (session.shellGeneration != expectedGeneration ||
+                (expectedSession != null && session.terminalSession !== expectedSession)
+            ) {
+                return@recoveryLock liveAndReady
+            }
+
+            Log.w(TAG, "Recovering terminal session $sessionId: $reason")
+            var generationInvalidated = false
+            session.commandMutex.withLock commandLock@{
+                val boundSession = sessionManager.getSession(sessionId) ?: return@commandLock
+                if (boundSession.shellGeneration != expectedGeneration ||
+                    (expectedSession != null && boundSession.terminalSession !== expectedSession)
+                ) {
+                    return@commandLock
+                }
+
+                closeSessionRuntime(sessionId, boundSession)
+                // A dead process can be observed before its reader publishes EOF. Complete that
+                // command here so its collector cannot remain suspended across the new shell.
+                outputProcessor.abortCurrentCommandForRecovery(sessionId, sessionManager)
+                val resetSession = sessionManager.getSession(sessionId) ?: return@commandLock
+                outputProcessor.clearSessionState(sessionId)
+                resetSession.rawBuffer.clear()
+                resetSession.currentCommandOutput.clear()
+                resetSession.currentOutputLineCount = 0
+                resetSession.currentCommandExitCode = null
+                resetSession.currentCommandCancellationRequested = false
+                resetSession.currentExecutingCommand = null
+                sessionManager.updateSession(sessionId) {
+                    it.copy(
+                        terminalSession = null,
+                        pty = null,
+                        sessionWriter = null,
+                        readJob = null,
+                        currentDirectory = "$ ",
+                        isWaitingForInteractiveInput = false,
+                        lastInteractivePrompt = "",
+                        isInteractiveMode = false,
+                        interactivePrompt = "",
+                        initState = SessionInitState.INITIALIZING,
+                        isFullscreen = false,
+                        shellGeneration = it.shellGeneration + 1L,
+                    )
+                }
+                generationInvalidated = true
+            }
+            if (!generationInvalidated) {
+                val current = sessionManager.getSession(sessionId)
+                return@recoveryLock current != null && isSessionRuntimeReady(current)
+            }
+
+            val environmentReady = initializeEnvironment()
+            if (!environmentReady) {
+                markSessionFailed(sessionId, "terminal environment initialization failed during recovery")
+                return@recoveryLock false
+            }
+            startSession(sessionId)
+            awaitSessionReady(sessionId, SESSION_READY_TIMEOUT_MS).also {
+                shouldResumeQueue = it
+            }
+        }
+        // Resume outside the recovery mutex. A queued writer failure may need another recovery,
+        // and Mutex is intentionally non-reentrant.
+        if (shouldResumeQueue) {
+            processNextQueuedCommand(sessionId)
+        }
+        return ready
+    }
+
+    private suspend fun closeSessionRuntime(sessionId: String, session: TerminalSessionData) {
+        closingSessions.add(sessionId)
+        runCatching { session.sessionWriter?.close() }
+            .onFailure { Log.w(TAG, "Failed to close terminal writer for $sessionId", it) }
+        runCatching { session.readJob?.cancel() }
+            .onFailure { Log.w(TAG, "Failed to cancel terminal reader for $sessionId", it) }
+        runCatching { getTerminalProvider().closeSession(sessionId) }
+            .onFailure { Log.w(TAG, "Failed to close provider session $sessionId", it) }
+        runCatching {
+            if (session.terminalSession?.process?.isAlive == true) {
+                session.terminalSession.process.destroy()
+            }
+        }.onFailure { Log.w(TAG, "Failed to destroy terminal process for $sessionId", it) }
+    }
+
+    private fun markSessionFailed(sessionId: String, reason: String) {
+        Log.e(TAG, "Terminal session $sessionId entered FAILED state: $reason")
+        sessionManager.updateSession(sessionId) { session ->
+            session.copy(
+                terminalSession = null,
+                pty = null,
+                sessionWriter = null,
+                readJob = null,
+                initState = SessionInitState.FAILED,
+                isWaitingForInteractiveInput = false,
+                isInteractiveMode = false,
+                interactivePrompt = "",
+            )
+        }
     }
     
     /**
@@ -808,12 +1096,140 @@ class TerminalManager private constructor(
                     Log.w(TAG, "Cannot interrupt missing terminal session $sessionId")
                     return@launch
                 }
-                writeInputToKernel(session, "\u0003", "interrupt-session")
-                Log.d(TAG, "Sent interrupt signal (Ctrl+C) to session $sessionId")
+                val commandId = session.currentExecutingCommand?.takeIf { it.isExecuting }?.id
+                if (commandId == null) {
+                    writeInputToKernel(session, "\u0003", "interrupt-session")
+                    Log.d(TAG, "Sent interrupt signal (Ctrl+C) to idle session $sessionId")
+                } else {
+                    cancelCommand(sessionId, commandId, SESSION_CLOSE_SETTLE_TIMEOUT_MS)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending interrupt signal to session $sessionId", e)
             }
         }
+    }
+
+    /**
+     * Cancels one exact command without allowing a timed-out queued call to interrupt a different
+     * command. Ctrl+C can prevent the trailing OSC status envelope from running; marking the
+     * command first lets the following real prompt close it. If no prompt arrives, replace the PTY
+     * under the same logical session ID so later commands cannot inherit a deaf state machine.
+     */
+    suspend fun cancelCommand(
+        sessionId: String,
+        commandId: String,
+        settleTimeoutMs: Long = SESSION_CLOSE_SETTLE_TIMEOUT_MS,
+    ): CommandCancellationResult {
+        val observedSession = sessionManager.getSession(sessionId)
+            ?: return CommandCancellationResult(
+                commandFound = false,
+                settled = false,
+                sessionHealthy = false,
+                sessionRecovered = false,
+                contextPreserved = false,
+            )
+
+        var cancelExecuting = false
+        var cancelQueued = false
+        var expectedSession: TerminalSession? = null
+        var expectedGeneration = observedSession.shellGeneration
+        observedSession.commandMutex.withLock {
+            val session = sessionManager.getSession(sessionId) ?: return@withLock
+            val current = session.currentExecutingCommand
+            if (current?.id == commandId && current.isExecuting) {
+                session.currentCommandCancellationRequested = true
+                session.currentCommandExitCode = -1
+                expectedSession = session.terminalSession
+                expectedGeneration = session.shellGeneration
+                try {
+                    writeInputToKernel(session, "\u0003", "cancel-command")
+                } catch (error: Exception) {
+                    // Keep the cancellation state authoritative even if the old writer has already
+                    // closed. Settlement will time out and the same logical session will be rebuilt.
+                    Log.w(TAG, "Unable to write cancellation signal for command $commandId", error)
+                }
+                cancelExecuting = true
+            } else {
+                val queuedIndex = session.commandQueue.indexOfFirst { it.id == commandId }
+                if (queuedIndex >= 0) {
+                    session.commandQueue.removeAt(queuedIndex)
+                    cancelQueued = true
+                }
+            }
+        }
+
+        if (cancelQueued) {
+            commandEventDispatcher.offer(
+                completedCommandExecutionEvent(
+                    commandId = commandId,
+                    sessionId = sessionId,
+                    exitCode = -1,
+                )
+            )
+            return currentSessionHealth(
+                sessionId = sessionId,
+                commandFound = true,
+                settled = true,
+                sessionRecovered = false,
+                contextPreserved = true,
+            )
+        }
+
+        if (!cancelExecuting) {
+            return currentSessionHealth(
+                sessionId = sessionId,
+                commandFound = false,
+                settled = true,
+                sessionRecovered = false,
+                contextPreserved = true,
+            )
+        }
+
+        if (awaitCommandSettlement(sessionId, commandId, settleTimeoutMs)) {
+            return currentSessionHealth(
+                sessionId = sessionId,
+                commandFound = true,
+                settled = true,
+                sessionRecovered = false,
+                contextPreserved = true,
+            )
+        }
+
+        // No prompt means this PTY cannot prove that it returned to a command boundary. Publish a
+        // terminal cancellation outcome before replacing it, then resume queued work only after
+        // the replacement shell reaches READY.
+        outputProcessor.abortCurrentCommandForRecovery(sessionId, sessionManager)
+        val recovered = recoverSession(
+            sessionId = sessionId,
+            expectedSession = expectedSession,
+            expectedGeneration = expectedGeneration,
+            reason = "command cancellation did not settle",
+        )
+        return currentSessionHealth(
+            sessionId = sessionId,
+            commandFound = true,
+            settled = true,
+            sessionRecovered = recovered,
+            contextPreserved = !recovered,
+        )
+    }
+
+    private fun currentSessionHealth(
+        sessionId: String,
+        commandFound: Boolean,
+        settled: Boolean,
+        sessionRecovered: Boolean,
+        contextPreserved: Boolean,
+    ): CommandCancellationResult {
+        val session = sessionManager.getSession(sessionId)
+        val healthy = session != null && isSessionRuntimeReady(session)
+        return CommandCancellationResult(
+            commandFound = commandFound,
+            settled = settled,
+            sessionHealthy = healthy,
+            sessionRecovered = sessionRecovered,
+            contextPreserved = contextPreserved && healthy,
+        )
     }
 
     private fun installSudoShim(): Boolean {
@@ -1469,6 +1885,7 @@ $prootBindSetup
         session.currentCommandOutput.clear()
         session.currentOutputLineCount = 0
         session.currentCommandExitCode = null
+        session.currentCommandCancellationRequested = false
 
         val newCommandItem = CommandHistoryItem(
             id = commandId,
@@ -1586,3 +2003,22 @@ internal fun buildCommandWithExitMarkerProtocol(command: String, commandId: Stri
         append("' \"\$?\"\n")
     }
 }
+
+internal fun isTargetCommandSettled(
+    targetCommandId: String,
+    currentCommandId: String?,
+    currentCommandExecuting: Boolean,
+): Boolean = !currentCommandExecuting || currentCommandId != targetCommandId
+
+internal fun isTerminalRuntimeReady(
+    initState: SessionInitState,
+    writerAvailable: Boolean,
+    processAlive: Boolean,
+): Boolean = initState == SessionInitState.READY && writerAvailable && processAlive
+
+private fun isSessionRuntimeReady(session: TerminalSessionData): Boolean =
+    isTerminalRuntimeReady(
+        initState = session.initState,
+        writerAvailable = session.sessionWriter != null,
+        processAlive = session.terminalSession?.process?.isAlive == true,
+    )

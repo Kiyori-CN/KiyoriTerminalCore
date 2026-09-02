@@ -5,6 +5,7 @@ import com.ai.assistance.operit.terminal.CommandExecutionEvent
 import com.ai.assistance.operit.terminal.CommandExitMarker
 import com.ai.assistance.operit.terminal.SessionDirectoryEvent
 import com.ai.assistance.operit.terminal.SessionManager
+import com.ai.assistance.operit.terminal.completedCommandExecutionEvent
 import com.ai.assistance.operit.terminal.data.SessionInitState
 import com.ai.assistance.operit.terminal.data.TerminalSessionData
 import com.ai.assistance.operit.terminal.view.domain.ansi.AnsiUtils
@@ -28,9 +29,16 @@ private data class SessionProcessingState(
     val commandExitDisplayFilter: CommandExitMarker.DisplayFilter = CommandExitMarker.DisplayFilter(),
 )
 
-/** A wrapped command is complete only after its status envelope has supplied an exit code. */
-internal fun shouldFinishCommandOnPrompt(commandExecuting: Boolean, exitCode: Int?): Boolean =
-    !commandExecuting || exitCode != null
+/**
+ * A wrapped command normally completes only after its status envelope supplied an exit code.
+ * Ctrl+C aborts the whole interactive input before the trailing envelope can run, so a prompt
+ * is also authoritative after the exact executing command has been marked for cancellation.
+ */
+internal fun shouldFinishCommandOnPrompt(
+    commandExecuting: Boolean,
+    exitCode: Int?,
+    cancellationRequested: Boolean = false,
+): Boolean = !commandExecuting || exitCode != null || cancellationRequested
 
 /**
  * 终端输出处理器
@@ -63,23 +71,30 @@ class OutputProcessor(
         val session = sessionManager.getSession(sessionId) ?: return
         session.rawBuffer.append(chunk)
 
-        if (session.rawBuffer.length > MAX_RAW_BUFFER_CHARS) {
-            val over = session.rawBuffer.length - MAX_RAW_BUFFER_CHARS
-            session.rawBuffer.delete(0, over)
-        }
-
         Log.d(TAG, "Processing chunk for session $sessionId. New buffer size: ${session.rawBuffer.length}")
 
         val state = sessionStates.getOrPut(sessionId) { SessionProcessingState() }
         val displayChunk = state.commandExitDisplayFilter.filter(chunk)
 
-        // Parse the status envelope before line-oriented processing. OSC markers can arrive split
-        // across read chunks, so inspect the accumulated raw buffer rather than one chunk only.
-        consumeCommandExitMarker(sessionId, session.rawBuffer.toString(), sessionManager)
+        // Parse and consume the status envelope before line-oriented processing. OSC markers can
+        // arrive split across read chunks, so inspect the accumulated raw buffer rather than one
+        // chunk only. Removing the exact marker preserves output that shares its physical line.
+        val rawBufferBeforeMarker = session.rawBuffer.toString()
+        if (consumeCommandExitMarker(sessionId, rawBufferBeforeMarker, sessionManager)) {
+            val commandId = session.currentExecutingCommand?.id
+            if (commandId != null) {
+                val withoutMarker = CommandExitMarker.remove(rawBufferBeforeMarker, commandId)
+                if (withoutMarker != rawBufferBeforeMarker) {
+                    session.rawBuffer.clear()
+                    session.rawBuffer.append(withoutMarker)
+                }
+            }
+        }
 
         // 始终检查全屏模式切换
         if (detectFullscreenMode(sessionId, session.rawBuffer, sessionManager)) {
             // 如果检测到模式切换，缓冲区可能已被修改，及早返回以处理下一个块
+            trimRawBufferIfNeeded(session)
             return
         }
 
@@ -92,6 +107,7 @@ class OutputProcessor(
         // 如果在全屏模式下，跳过行解析逻辑（全屏应用自己管理屏幕）
         if (session.isFullscreen) {
             // 不需要再次解析，ansiParser 已经更新
+            trimRawBufferIfNeeded(session)
             return
         }
 
@@ -166,6 +182,17 @@ class OutputProcessor(
                 break // Exit loop, wait for more data.
             }
         }
+
+        // Apply the safety cap only after complete lines and status markers have been consumed.
+        // Trimming before parsing can discard the head of a single large PTY read—even when that
+        // read already contains many complete lines—and silently make the tool transcript shorter.
+        trimRawBufferIfNeeded(session)
+    }
+
+    private fun trimRawBufferIfNeeded(session: TerminalSessionData) {
+        if (session.rawBuffer.length <= MAX_RAW_BUFFER_CHARS) return
+        val over = session.rawBuffer.length - MAX_RAW_BUFFER_CHARS
+        session.rawBuffer.delete(0, over)
     }
 
     /**
@@ -249,6 +276,7 @@ class OutputProcessor(
                     handleReadyState(sessionId, line, sessionManager)
                 }
             }
+            SessionInitState.FAILED -> Unit
         }
     }
 
@@ -389,7 +417,12 @@ class OutputProcessor(
 
             val outputBeforePrompt = line.substring(0, match.range.first)
             if (outputBeforePrompt.isNotBlank()) {
-                session.currentCommandOutput.append(outputBeforePrompt)
+                updateCommandOutput(
+                    sessionId,
+                    outputBeforePrompt,
+                    sessionManager,
+                    lineTerminated = false,
+                )
             }
             true
         } else {
@@ -431,6 +464,7 @@ class OutputProcessor(
             if (!shouldFinishCommandOnPrompt(
                     commandExecuting = session.currentExecutingCommand?.isExecuting == true,
                     exitCode = session.currentCommandExitCode,
+                    cancellationRequested = session.currentCommandCancellationRequested,
                 )
             ) {
                 Log.d(TAG, "Ignoring intermediate prompt before command exit marker for session $sessionId")
@@ -507,7 +541,7 @@ class OutputProcessor(
 
         // 将交互式提示添加到当前命令的输出中
         if (cleanLine.isNotBlank()) {
-            updateCommandOutput(sessionId, cleanLine, sessionManager)
+            updateCommandOutput(sessionId, cleanLine, sessionManager, lineTerminated = false)
         }
     }
 
@@ -530,7 +564,8 @@ class OutputProcessor(
     private fun updateCommandOutput(
         sessionId: String,
         cleanLine: String,
-        sessionManager: SessionManager
+        sessionManager: SessionManager,
+        lineTerminated: Boolean = true,
     ) {
         val session = sessionManager.getSession(sessionId) ?: return
         val currentItem = session.currentExecutingCommand
@@ -551,7 +586,7 @@ class OutputProcessor(
             onCommandExecutionEvent(CommandExecutionEvent(
                 commandId = currentItem.id,
                 sessionId = sessionId,
-                outputChunk = cleanLine,
+                outputChunk = if (lineTerminated) "$cleanLine\n" else cleanLine,
                 isCompleted = false
             ))
 
@@ -559,6 +594,7 @@ class OutputProcessor(
                 // 当前页已满，将其添加到已完成的页面列表并开始新的一页
                 while (currentItem.outputPages.size >= MAX_OUTPUT_PAGES_PER_COMMAND) {
                     currentItem.outputPages.removeAt(0)
+                    currentItem.outputTruncated = true
                 }
                 currentItem.outputPages.add(currentItem.output)
                 builder.clear()
@@ -591,10 +627,26 @@ class OutputProcessor(
             }
             // Update history from the builder
             lastExecutingItem.setOutput(builder.toString().trimEnd())
+
+            // UI history replaces carriage-return progress in place, while tool callers need an
+            // observable transcript. Newline-delimited revisions preserve partial progress on a
+            // timeout without concatenating separate updates into one unreadable line.
+            onCommandExecutionEvent(
+                CommandExecutionEvent(
+                    commandId = lastExecutingItem.id,
+                    sessionId = sessionId,
+                    outputChunk = "$cleanLine\n",
+                    isCompleted = false,
+                )
+            )
         }
     }
 
-    private fun finishCurrentCommand(sessionId: String, sessionManager: SessionManager) {
+    private fun finishCurrentCommand(
+        sessionId: String,
+        sessionManager: SessionManager,
+        notifyQueue: Boolean = true,
+    ) {
         sessionManager.updateSession(sessionId) { session ->
             session.copy(
                 isWaitingForInteractiveInput = false,
@@ -608,39 +660,50 @@ class OutputProcessor(
         val lastExecutingItem = session.currentExecutingCommand
 
         if (lastExecutingItem != null && lastExecutingItem.isExecuting) {
-            val finalOutput = buildString {
-                if (lastExecutingItem.outputPages.isNotEmpty()) {
-                    append(lastExecutingItem.outputPages.joinToString("\n"))
-                }
-                val tail = session.currentCommandOutput.toString().trim()
-                if (tail.isNotEmpty()) {
-                    if (isNotEmpty()) append('\n')
-                    append(tail)
-                }
-            }.trim()
+            val finalOutput = assembleCommandHistoryOutput(
+                pages = lastExecutingItem.outputPages,
+                tail = session.currentCommandOutput.toString(),
+            )
 
             lastExecutingItem.setOutput(finalOutput)
             lastExecutingItem.setExecuting(false)
 
             Log.i(TAG, "Finishing command ${lastExecutingItem.id} for session $sessionId")
             
-            // 发出命令完成事件
-            onCommandExecutionEvent(CommandExecutionEvent(
-                commandId = lastExecutingItem.id,
-                sessionId = sessionId,
-                outputChunk = finalOutput,
-                isCompleted = true,
-                exitCode = session.currentCommandExitCode
-            ))
+            // Completion only signals the boundary and exit status. The bounded UI snapshot above
+            // must never replace the complete incremental transcript consumed by tool callers.
+            onCommandExecutionEvent(
+                completedCommandExecutionEvent(
+                    commandId = lastExecutingItem.id,
+                    sessionId = sessionId,
+                    exitCode = session.currentCommandExitCode,
+                )
+            )
 
             // Clear the reference since command is no longer executing
             session.currentExecutingCommand = null
             session.currentCommandExitCode = null
+            session.currentCommandCancellationRequested = false
             session.currentCommandOutput.clear()
             
             // 通知命令已完成，可以处理下一个队列命令
-            onCommandCompleted(sessionId)
+            if (notifyQueue) {
+                onCommandCompleted(sessionId)
+            }
         }
+
+    }
+
+    /**
+     * Finish a command whose Ctrl+C cancellation never produced a prompt. The owning manager
+     * immediately replaces that PTY, so queued commands must wait for the new shell instead of
+     * being written through the unhealthy writer.
+     */
+    fun abortCurrentCommandForRecovery(sessionId: String, sessionManager: SessionManager) {
+        val session = sessionManager.getSession(sessionId) ?: return
+        session.currentCommandExitCode = -1
+        session.currentCommandCancellationRequested = true
+        finishCurrentCommand(sessionId, sessionManager, notifyQueue = false)
     }
 
     fun handleSessionExit(
@@ -663,43 +726,34 @@ class OutputProcessor(
 
         val lastExecutingItem = session.currentExecutingCommand
         if (lastExecutingItem != null && lastExecutingItem.isExecuting) {
+            // Publish the process-exit line through the same ordered incremental channel. Tool
+            // collectors can then preserve it even when the bounded history snapshot lost pages.
+            updateCommandOutput(sessionId, message, sessionManager)
             val builder = session.currentCommandOutput
-            if (builder.isNotEmpty() && builder.last() != '\n') {
-                builder.append('\n')
-            }
-            builder.append(message)
 
-            val finalOutput = buildString {
-                if (lastExecutingItem.outputPages.isNotEmpty()) {
-                    append(lastExecutingItem.outputPages.joinToString("\n"))
-                }
-                val tail = builder.toString().trim()
-                if (tail.isNotEmpty()) {
-                    if (isNotEmpty()) append('\n')
-                    append(tail)
-                }
-            }.trim()
+            val finalOutput = assembleCommandHistoryOutput(
+                pages = lastExecutingItem.outputPages,
+                tail = builder.toString(),
+            )
 
             lastExecutingItem.setOutput(finalOutput)
             lastExecutingItem.setExecuting(false)
 
             onCommandExecutionEvent(
-                CommandExecutionEvent(
+                completedCommandExecutionEvent(
                     commandId = lastExecutingItem.id,
                     sessionId = sessionId,
-                    outputChunk = finalOutput,
-                    isCompleted = true,
-                    exitCode = null
+                    exitCode = null,
                 )
             )
 
             session.currentExecutingCommand = null
             session.currentCommandExitCode = null
+            session.currentCommandCancellationRequested = false
         }
 
         session.currentCommandOutput.clear()
         session.currentOutputLineCount = 0
-        session.commandQueue.clear()
     }
 
     private fun consumeCommandExitMarker(
@@ -791,4 +845,15 @@ class OutputProcessor(
         Log.d(TAG, "Screen cleared and welcome message sent to Canvas for session $sessionId")
     }
 
+}
+
+internal fun assembleCommandHistoryOutput(pages: List<String>, tail: String): String = buildString {
+    pages.forEach { page ->
+        if (isNotEmpty() && last() != '\n') append('\n')
+        append(page)
+    }
+    if (tail.isNotEmpty()) {
+        if (isNotEmpty() && last() != '\n') append('\n')
+        append(tail)
+    }
 }

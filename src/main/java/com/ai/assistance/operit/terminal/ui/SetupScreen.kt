@@ -825,6 +825,6 @@ internal fun nodeJsRequiredByPnpm(
 ): Boolean =
     selectedPackages["pnpm"] == true && packageStatus["nodejs"] != InstallStatus.INSTALLED
 
-/** 保留给旧测试和调用方的完成事件投影；进度事件不参与安装状态判定。 */
+/** 完成事件只表示边界和退出状态；正文始终由增量事件承载。 */
 internal fun completedCommandOutput(event: CommandExecutionEvent): String? =
-    if (event.isCompleted) event.outputChunk else null
+    null

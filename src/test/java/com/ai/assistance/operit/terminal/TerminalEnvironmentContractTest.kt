@@ -103,7 +103,7 @@ class TerminalEnvironmentContractTest {
     }
 
     @Test
-    fun setupDetectionUsesOnlyTheAuthoritativeCompletionOutput() {
+    fun setupDetectionDoesNotReadCompletionEventBody() {
         val commandId = "environment-check"
         val sessionId = "terminal-session"
         val marker = TerminalEnvironmentContract.NODE_TOOLCHAIN_READY_MARKER
@@ -118,13 +118,12 @@ class TerminalEnvironmentContractTest {
                 )
             )
         )
-        assertEquals(
-            marker,
+        assertNull(
             completedCommandOutput(
                 CommandExecutionEvent(
                     commandId = commandId,
                     sessionId = sessionId,
-                    outputChunk = marker,
+                    outputChunk = "",
                     isCompleted = true,
                 )
             )

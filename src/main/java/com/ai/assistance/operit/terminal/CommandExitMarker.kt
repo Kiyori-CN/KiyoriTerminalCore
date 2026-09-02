@@ -42,6 +42,22 @@ internal object CommandExitMarker {
         }
         .firstOrNull()
 
+    /**
+     * Removes exactly one status marker for the expected command while preserving every byte of
+     * surrounding command output. This is needed when a command does not print a trailing newline:
+     * the OSC envelope and the last output fragment then share one physical line, and merely
+     * recognizing the marker would otherwise discard that fragment when line processing returns.
+     */
+    fun remove(line: String, expectedCommandId: String): String {
+        for (pattern in commandMarkerPatterns) {
+            val match = pattern.find(line) ?: continue
+            if (match.groupValues.getOrNull(1) == expectedCommandId) {
+                return line.removeRange(match.range)
+            }
+        }
+        return line
+    }
+
     fun isProtocolEcho(line: String): Boolean =
         line.contains("__operit_command_exit_code=\$?") ||
             line.contains("printf") &&

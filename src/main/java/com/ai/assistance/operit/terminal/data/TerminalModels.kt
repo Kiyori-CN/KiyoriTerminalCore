@@ -42,6 +42,7 @@ class CommandHistoryItem(
     val command: String get() = _command
     val output: String get() = _output
     val isExecuting: Boolean get() = _isExecuting
+    var outputTruncated: Boolean = false
     
     // 为UI更新提供setter方法
     fun setPrompt(value: String) { _prompt = value }
@@ -72,7 +73,8 @@ enum class SessionInitState {
     INITIALIZING,
     LOGGED_IN,
     AWAITING_FIRST_PROMPT,
-    READY
+    READY,
+    FAILED
 }
 
 /**
@@ -99,8 +101,10 @@ data class TerminalSessionData(
     @Transient var currentExecutingCommand: CommandHistoryItem? = null,
     @Transient var currentOutputLineCount: Int = 0,
     @Transient var currentCommandExitCode: Int? = null,
+    @Transient var currentCommandCancellationRequested: Boolean = false,
     @Transient val commandQueue: MutableList<QueuedCommand> = mutableListOf(),
     @Transient val commandMutex: Mutex = Mutex(),
+    @Transient val shellGeneration: Long = 0L,
     // 保存每个会话的滚动位置
     var scrollOffsetY: Float = 0f
 ) {

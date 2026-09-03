@@ -446,7 +446,8 @@ class CacheManager(private val context: Context) {
         val filesToClean = listOf(
             "common.sh",
             "proot-distro.zip",
-            "ubuntu-noble-aarch64-pd-v4.18.0.tar.xz"
+            "ubuntu-noble-aarch64-pd-v4.18.0.tar.xz",
+            "ubuntu-resolute-arm64-kiyori-v1.tar.xz"
         )
 
         filesToClean.forEach { fileName ->

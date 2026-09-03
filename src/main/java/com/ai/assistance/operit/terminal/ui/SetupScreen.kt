@@ -156,15 +156,15 @@ fun SetupScreen(
                 packages =
                     listOf(
                         PackageItem(
-                            "openjdk-17",
+                            TerminalEnvironmentContract.OPENJDK_PACKAGE_ID,
                             stringResource(com.ai.assistance.operit.terminal.R.string.package_openjdk_name),
-                            "openjdk-17-jdk",
+                            TerminalEnvironmentContract.OPENJDK_APT_PACKAGE,
                             stringResource(com.ai.assistance.operit.terminal.R.string.package_openjdk_desc),
                         ),
                         PackageItem(
                             "gradle",
                             stringResource(com.ai.assistance.operit.terminal.R.string.package_gradle_name),
-                            "gradle",
+                            TerminalEnvironmentContract.buildGradleInstallCommand(),
                             stringResource(com.ai.assistance.operit.terminal.R.string.package_gradle_desc),
                         ),
                     ),
@@ -409,6 +409,11 @@ fun SetupScreen(
                     val shouldInstallRust =
                         selectedPackages.getOrDefault("rust", false) &&
                             packageStatus["rust"] != InstallStatus.INSTALLED
+                    val shouldInstallGradle =
+                        selectedPackages.getOrDefault("gradle", false) &&
+                            packageStatus["gradle"] != InstallStatus.INSTALLED
+                    val shouldInstallOpenJdkForGradle =
+                        openJdkRequiredByGradle(selectedPackages, packageStatus)
                     // pnpm is installed through npm, so selecting it must also provision a
                     // usable Node.js runtime when the capability probe says Node is missing or
                     // inconclusive. Otherwise the generated npm command fails immediately.
@@ -428,7 +433,7 @@ fun SetupScreen(
                                     val rustEnvCommand = sourceManager.getRustSourceEnvCommand(rustSource)
                                     // 添加环境变量设置和安装命令
                                     selectedCustomCommands.add("$rustEnvCommand && curl -v --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y")
-                                } else if (pkg.id == "uv" || pkg.id == "nodejs") {
+                                } else if (pkg.id == "uv" || pkg.id == "nodejs" || pkg.id == "gradle") {
                                     selectedCustomCommands.add(pkg.command)
                                 } else if (category.id == "nodejs" && pkg.id != "nodejs") {
                                     selectedNpmPackages.add(pkg.command)
@@ -459,6 +464,12 @@ fun SetupScreen(
                         ) {
                             allAptDeps.add("curl")
                         }
+                        if (shouldInstallGradle) {
+                            allAptDeps.add("unzip")
+                        }
+                        if (shouldInstallOpenJdkForGradle) {
+                            allAptDeps.add(TerminalEnvironmentContract.OPENJDK_APT_PACKAGE)
+                        }
                     }
                     
                     // 添加选中的 apt 包
@@ -480,6 +491,12 @@ fun SetupScreen(
                         // rustup 把工具链放在用户目录，当前 shell 必须与后续 hidden probe 使用同一路径。
                         if (shouldInstallRust) {
                             commands.addAll(TerminalEnvironmentContract.RUSTUP_POST_INSTALL_COMMANDS)
+                        }
+                        if (selectedCustomCommands.any { command ->
+                                command == TerminalEnvironmentContract.buildNodeJsInstallCommand() ||
+                                    command == TerminalEnvironmentContract.buildGradleInstallCommand()
+                            }) {
+                            commands.add("export PATH=\"${'$'}HOME/.local/bin:${'$'}PATH\"")
                         }
                     }
                     
@@ -539,10 +556,10 @@ private fun CategoryCard(
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    // Operit必须标签 - 第二行
+                    // Kiyori 必须标签 - 第二行
                     if (category.id == "nodejs" || category.id == "python") {
                         Text(
-                            text = "(${stringResource(com.ai.assistance.operit.terminal.R.string.operit_required)})",
+                            text = "(${stringResource(com.ai.assistance.operit.terminal.R.string.kiyori_required)})",
                             color = Color(0xFFFFA500), // Orange color
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Bold,
@@ -704,16 +721,21 @@ internal fun packageCheckCommand(pkg: PackageItem): String = when (pkg.id) {
         "PATH=\"${TerminalEnvironmentContract.PIPX_BIN_DIR}:${'$'}PATH\" command -v uv && " +
             "PATH=\"${TerminalEnvironmentContract.PIPX_BIN_DIR}:${'$'}PATH\" uv --version"
     "nodejs" ->
-        "node -v >/dev/null 2>&1 && " +
-            "node -e \"process.exit(Number(process.versions.node.split('.')[0]) >= " +
-            "${TerminalEnvironmentContract.REQUIRED_NODE_MAJOR_VERSION} ? 0 : 1)\" >/dev/null 2>&1 && " +
-            "npm --version >/dev/null 2>&1"
+        "PATH=\"${TerminalEnvironmentContract.USER_LOCAL_BIN_DIR}:${'$'}PATH\" " +
+            "node -v >/dev/null 2>&1 && " +
+            "PATH=\"${TerminalEnvironmentContract.USER_LOCAL_BIN_DIR}:${'$'}PATH\" " +
+            "node -e \"process.exit(process.version === 'v${TerminalEnvironmentContract.NODE_LTS_VERSION}' ? 0 : 1)\" >/dev/null 2>&1 && " +
+            "test \"${'$'}(\"${'$'}HOME/.local/bin/npm\" --version)\" = \"${TerminalEnvironmentContract.NODE_NPM_VERSION}\""
     "pnpm" -> TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
     "go" -> "command -v go"
     "ssh" -> "command -v ssh"
     "sshpass" -> "command -v sshpass"
     "openssh-server" -> "command -v sshd"
-    "gradle" -> "command -v gradle"
+    "openjdk-25" ->
+        "java -version 2>&1 | grep -E 'version \"${TerminalEnvironmentContract.GRADLE_REQUIRED_JAVA_MAJOR}([.]|\")'"
+    "gradle" ->
+        "PATH=\"${TerminalEnvironmentContract.USER_LOCAL_BIN_DIR}:${'$'}PATH\" " +
+            "gradle --version | grep -F 'Gradle ${TerminalEnvironmentContract.GRADLE_VERSION}'"
     "python-is-python3" ->
         "python --version >/dev/null 2>&1 && python3 --version >/dev/null 2>&1 && " +
             "python_path=\"${'$'}(command -v python)\" && python3_path=\"${'$'}(command -v python3)\" && " +
@@ -731,13 +753,13 @@ internal fun checkPackageInstalled(result: HiddenExecResult, pkg: PackageItem): 
 
     return when (pkg.id) {
         "nodejs" -> {
-            // 检查 Node.js 版本是否 >= 24
-            val versionMatch = Regex("""(?:^|\s)v(\d+)\.""").find(output)
-            val majorVersion = versionMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
-            majorVersion >= 24
+            TerminalEnvironmentContract.isNodeRuntimeReady(output)
         }
+        TerminalEnvironmentContract.OPENJDK_PACKAGE_ID ->
+            output.lineSequence().any { line -> line.contains("version \"${TerminalEnvironmentContract.GRADLE_REQUIRED_JAVA_MAJOR}.") }
         "python-is-python3", "python3-venv", "python3-pip" -> true
-        "rust", "uv", "go", "ssh", "sshpass", "openssh-server", "gradle" -> output.isNotBlank()
+        "rust", "uv", "go", "ssh", "sshpass", "openssh-server" -> output.isNotBlank()
+        "gradle" -> TerminalEnvironmentContract.isGradleReady(output)
         "pnpm" -> TerminalEnvironmentContract.isNodeToolchainReady(output)
         else -> output.lineSequence().any { line ->
             line.trim() == "install ok installed" || line.trim() == "Status: install ok installed"
@@ -824,6 +846,14 @@ internal fun nodeJsRequiredByPnpm(
     packageStatus: Map<String, InstallStatus>,
 ): Boolean =
     selectedPackages["pnpm"] == true && packageStatus["nodejs"] != InstallStatus.INSTALLED
+
+internal fun openJdkRequiredByGradle(
+    selectedPackages: Map<String, Boolean>,
+    packageStatus: Map<String, InstallStatus>,
+): Boolean =
+    selectedPackages["gradle"] == true &&
+        packageStatus["gradle"] != InstallStatus.INSTALLED &&
+        packageStatus[TerminalEnvironmentContract.OPENJDK_PACKAGE_ID] != InstallStatus.INSTALLED
 
 /** 完成事件只表示边界和退出状态；正文始终由增量事件承载。 */
 internal fun completedCommandOutput(event: CommandExecutionEvent): String? =

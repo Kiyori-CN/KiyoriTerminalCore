@@ -10,15 +10,14 @@ import com.ai.assistance.operit.terminal.data.SessionInitState
 import com.ai.assistance.operit.terminal.data.TerminalSessionData
 import com.ai.assistance.operit.terminal.view.domain.ansi.AnsiUtils
 
-internal const val KIYORI_WELCOME_MESSAGE =
-    "  _  __ ___ __   __ ___  ____  ___\r\n" +
-        " | |/ /|_ _|\\ \\ / // _ \\|  _ \\|_ _|\r\n" +
-        " | ' /  | |  \\ V /| | | | |_) || |\r\n" +
-        " | . \\  | |   | | | |_| |  _ < | |\r\n" +
-        " |_|\\_\\|___|  |_|  \\___/|_| \\_\\___|\r\n" +
-        "\r\n" +
-        "  >> Kiyori Ubuntu environment on Android <<\r\n" +
-        "\r\n"
+/**
+ * Clear transient initialization output when the first prompt becomes usable.
+ *
+ * The terminal deliberately does not inject a product banner here.  A banner was part of the
+ * inherited pre-release shell and made the first frame look like a different application; the
+ * prompt and the user's own command output are the only persistent terminal content.
+ */
+internal const val INITIAL_SCREEN_RESET_SEQUENCE = "\u001B[2J\u001B[H"
 
 /**
  * 终端输出的会话处理状态
@@ -322,8 +321,8 @@ class OutputProcessor(
                 session.copy(initState = SessionInitState.READY)
             }
             
-            // 发送欢迎语到 Canvas
-            sendWelcomeMessage(sessionId, sessionManager)
+            // 清理初始化过程中的临时输出；不注入任何产品 banner。
+            clearInitialScreen(sessionId, sessionManager)
         } else {
             Log.d(TAG, "Not a prompt, continuing to wait...")
         }
@@ -826,23 +825,15 @@ class OutputProcessor(
     }
 
     /**
-     * 发送欢迎消息到 Canvas
-     * 在 READY 状态时清屏，然后显示欢迎消息
+     * 在 READY 状态时清理初始化过程中的临时输出，不改变会话状态或首个 prompt。
      */
-    private fun sendWelcomeMessage(sessionId: String, sessionManager: SessionManager) {
+    private fun clearInitialScreen(sessionId: String, sessionManager: SessionManager) {
         val session = sessionManager.getSession(sessionId) ?: return
-        
-        // 构建欢迎消息，包含 ANSI 控制序列
-        // \u001B[2J - 清屏（清除初始化过程中的所有输出）
-        // \u001B[H - 移动光标到左上角
-        // 使用 \r\n 确保正确换行（\r 回车到行首，\n 换到下一行）
-        val welcomeMessage = "\u001B[2J\u001B[H$KIYORI_WELCOME_MESSAGE"
-        
-        // 直接发送到 ANSI 解析器（Canvas 渲染）
-        // 清屏操作会清除之前初始化过程中的所有输出
-        session.ansiParser.parse(welcomeMessage)
-        
-        Log.d(TAG, "Screen cleared and welcome message sent to Canvas for session $sessionId")
+
+        // 直接发送到 ANSI 解析器；仅清屏和复位光标，不伪造任何欢迎内容。
+        session.ansiParser.parse(INITIAL_SCREEN_RESET_SEQUENCE)
+
+        Log.d(TAG, "Initialization screen cleared for session $sessionId")
     }
 
 }

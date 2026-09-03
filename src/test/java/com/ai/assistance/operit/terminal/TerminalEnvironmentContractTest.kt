@@ -1,6 +1,6 @@
 package com.ai.assistance.operit.terminal
 
-import com.ai.assistance.operit.terminal.view.domain.KIYORI_WELCOME_MESSAGE
+import com.ai.assistance.operit.terminal.view.domain.INITIAL_SCREEN_RESET_SEQUENCE
 import com.ai.assistance.operit.terminal.ui.completedCommandOutput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,7 +21,7 @@ class TerminalEnvironmentContractTest {
     }
 
     @Test
-    fun aptAndNodeSetupShareTheUnattendedInstallContract() {
+    fun aptAndNodeSetupUsePinnedStableInputs() {
         val aptCommand = TerminalEnvironmentContract.buildAptInstallCommand(
             listOf("python3-venv", "package'quoted")
         )
@@ -31,8 +31,10 @@ class TerminalEnvironmentContractTest {
             "DEBIAN_FRONTEND=noninteractive apt-get install -y 'python3-venv' 'package'\\''quoted'",
             aptCommand,
         )
-        assertTrue(nodeCommand.contains("DEBIAN_FRONTEND=noninteractive bash -"))
-        assertTrue(nodeCommand.endsWith("DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs"))
+        assertTrue(nodeCommand.contains("node-v${TerminalEnvironmentContract.NODE_LTS_VERSION}-linux-arm64.tar.xz"))
+        assertTrue(nodeCommand.contains(TerminalEnvironmentContract.NODE_LTS_SHA256))
+        assertTrue(nodeCommand.contains("test \"${'$'}(uname -m)\" = \"aarch64\""))
+        assertFalse(nodeCommand.contains("deb.nodesource.com"))
     }
 
     @Test
@@ -42,9 +44,13 @@ class TerminalEnvironmentContractTest {
             registryUrl = "https://registry.example.test/"
         )
 
-        assertEquals(3, commands.size)
+        assertEquals(4, commands.size)
         assertEquals("npm config set registry 'https://registry.example.test/'", commands[0])
-        assertEquals("npm install -g pnpm 'typescript'", commands[2])
+        assertTrue(commands[1].contains("npm config set prefix"))
+        assertEquals(
+            "NPM_CONFIG_PREFIX=\"\$HOME/.local\" npm install -g 'pnpm@${TerminalEnvironmentContract.PNPM_VERSION}' 'typescript@${TerminalEnvironmentContract.TYPESCRIPT_VERSION}'",
+            commands[3],
+        )
         assertTrue(commands.none { command -> command.startsWith("pnpm add -g") })
         assertTrue(commands.none { command -> command.contains(".bashrc") })
     }
@@ -79,10 +85,13 @@ class TerminalEnvironmentContractTest {
     fun nodeToolchainRequiresAnExactCompletionMarker() {
         val commandEcho = TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
 
-        assertTrue(commandEcho.contains(">= 24"))
-        assertTrue(commandEcho.contains("global_bin=\"\$(npm prefix -g)/bin\""))
-        assertTrue(commandEcho.contains("\"\$global_bin/pnpm\" --version"))
-        assertTrue(commandEcho.contains("\"\$global_bin/tsc\" --version"))
+        assertTrue(commandEcho.contains("node -p 'process.version'"))
+        assertTrue(commandEcho.contains("= \"v${TerminalEnvironmentContract.NODE_LTS_VERSION}\""))
+        assertTrue(commandEcho.contains("\$HOME/.local/bin"))
+        assertTrue(commandEcho.contains("global_bin=\"\$(NPM_CONFIG_PREFIX=\"\$HOME/.local\""))
+        assertTrue(commandEcho.contains("npm --version)\" = \"${TerminalEnvironmentContract.NODE_NPM_VERSION}"))
+        assertTrue(commandEcho.contains("\"\$global_bin/pnpm\" --version)\" = \"${TerminalEnvironmentContract.PNPM_VERSION}"))
+        assertTrue(commandEcho.contains("\"\$global_bin/tsc\" --version)\" = \"Version ${TerminalEnvironmentContract.TYPESCRIPT_VERSION}"))
         assertFalse(commandEcho.contains("&& pnpm --version"))
         assertFalse(commandEcho.contains("&& tsc --version"))
         assertFalse(TerminalEnvironmentContract.isNodeToolchainReady(commandEcho))
@@ -97,9 +106,21 @@ class TerminalEnvironmentContractTest {
     fun nodeInstallerIsReusableAsThePnpmPrerequisite() {
         val command = TerminalEnvironmentContract.buildNodeJsInstallCommand()
 
-        assertTrue(command.contains("setup_24.x"))
-        assertTrue(command.contains("DEBIAN_FRONTEND=noninteractive"))
-        assertTrue(command.endsWith("apt-get install -y nodejs"))
+        assertTrue(command.contains("https://nodejs.org/dist/v${TerminalEnvironmentContract.NODE_LTS_VERSION}/"))
+        assertTrue(command.contains("sha256sum -c"))
+        assertTrue(command.contains("export PATH=\"\$HOME/.local/bin:\$PATH\""))
+    }
+
+    @Test
+    fun gradleInstallerUsesPinnedOfficialDistribution() {
+        val command = TerminalEnvironmentContract.buildGradleInstallCommand()
+
+        assertTrue(command.contains("gradle-${TerminalEnvironmentContract.GRADLE_VERSION}-bin.zip"))
+        assertTrue(command.contains(TerminalEnvironmentContract.GRADLE_SHA256))
+        assertTrue(command.contains("unzip -q"))
+        assertTrue(command.contains("version \\\"${TerminalEnvironmentContract.GRADLE_REQUIRED_JAVA_MAJOR}"))
+        assertTrue(command.contains(".local/opt/gradle-${TerminalEnvironmentContract.GRADLE_VERSION}"))
+        assertFalse(command.contains("apt-get install -y gradle"))
     }
 
     @Test
@@ -131,11 +152,9 @@ class TerminalEnvironmentContractTest {
     }
 
     @Test
-    fun welcomeMessageUsesCompactKiyoriBranding() {
-        val visibleLines = KIYORI_WELCOME_MESSAGE.lineSequence().filter { it.isNotEmpty() }.toList()
-
-        assertTrue(KIYORI_WELCOME_MESSAGE.contains("Kiyori Ubuntu environment on Android"))
-        assertFalse(KIYORI_WELCOME_MESSAGE.contains("Your portable Ubuntu environment"))
-        assertTrue(visibleLines.all { line -> line.length <= 48 })
+    fun readyScreenResetDoesNotInjectAProductBanner() {
+        assertEquals("\u001B[2J\u001B[H", INITIAL_SCREEN_RESET_SEQUENCE)
+        assertFalse(INITIAL_SCREEN_RESET_SEQUENCE.contains("Kiyori"))
+        assertFalse(INITIAL_SCREEN_RESET_SEQUENCE.contains("Operit"))
     }
 }

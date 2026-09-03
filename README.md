@@ -39,4 +39,21 @@ Repository branding does not rename the inherited `com.ai.assistance.operit.term
 
 ## Ubuntu environment
 
-The embedded Ubuntu rootfs keeps the Ubuntu distribution identity and existing internal paths. Kiyori owns the surrounding terminal presentation and the first-run toolchain flow. Selecting `pnpm` provisions Node.js 24 before npm installs `pnpm` and global TypeScript through npm's global bin; readiness requires Node/npm and resolves `npm prefix -g` before invoking both installed CLIs from that exact bin.
+The embedded Ubuntu rootfs keeps the Ubuntu distribution identity and existing internal paths. Kiyori owns the surrounding terminal presentation and the first-run toolchain flow; the READY frame does not inject a product banner. The shipped arm64 rootfs is Ubuntu 26.04.1 Resolute, built from a signed Canonical Base input and a frozen package snapshot so the core package set is reproducible and current at the recorded snapshot. Large optional toolchains are downloaded only when selected, keeping APK size and Android memory peaks bounded.
+
+The environment setup uses the following audited stable versions:
+
+| Tool | Version and delivery |
+| --- | --- |
+| Node.js | `24.20.0` LTS arm64 archive, official SHA-256 verified; bundled npm `11.19.0` |
+| pnpm | `11.25.0`, installed into `$HOME/.local/bin` |
+| TypeScript | `7.0.2`, installed into the same npm global bin |
+| OpenJDK | Ubuntu Resolute `openjdk-25-jdk` (25.0.4+7-1~26.04 at the recorded snapshot) |
+| Gradle | Official `9.7.1` binary distribution, fixed SHA-256; selecting Gradle also provisions OpenJDK 25 when needed |
+
+Selecting `pnpm` provisions Node.js 24 before npm installs pnpm and TypeScript. Readiness resolves
+`npm prefix -g` and checks the exact Node/npm/pnpm/TypeScript versions from that bin, so visible and
+hidden sessions do not depend on profile-specific `PATH` state. The active rootfs marker is
+`.kiyori_installed_ok`; `.operit_installed_ok` is accepted only as a one-time historical migration
+input and is removed after the new marker is verified. The inherited namespace, AIDL, paths and
+protocol identifiers remain compatibility boundaries.

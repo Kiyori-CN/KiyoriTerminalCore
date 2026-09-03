@@ -1,0 +1,55 @@
+{
+  "schema": "kiyori.rootfs.manifest.v1",
+  "distribution": "ubuntu",
+  "release": "26.04.1",
+  "codename": "resolute",
+  "architecture": "arm64",
+  "asset": {
+    "filename": "ubuntu-resolute-arm64-kiyori-v1.tar.xz",
+    "sha256": "e1efa3879bd06902eddc5c4e73642e68c7f08149135ec353a5c915a211398a11",
+    "compressedBytes": 53788140,
+    "expandedBytes": 292822634,
+    "archiveMembers": 10731,
+    "hardlinkMembers": 0
+  },
+  "packageLock": {
+    "filename": "ubuntu-resolute-arm64-kiyori-v1.packages.tsv",
+    "sha256": "a1bf6699642ebddca4d6766c89c6fe2fe6d449f2f37713a29a478e5056a5a3b3",
+    "packageCount": 164
+  },
+  "markers": {
+    "installed": ".kiyori_installed_ok",
+    "manifest": ".kiyori_rootfs_manifest",
+    "legacyInstalled": ".operit_installed_ok"
+  },
+  "input": {
+    "baseUrl": "https://cdimage.ubuntu.com/ubuntu-base/releases/26.04/release/ubuntu-base-26.04.1-base-arm64.tar.gz",
+    "baseSha256": "5a1906794ced63a71a8119c3f211ef5f0bbe0a243001b4bbd41fdf80c5b219fd",
+    "snapshotUrl": "https://snapshot.ubuntu.com/ubuntu/20260827T205830Z/",
+    "sourceDateEpoch": 1787864310
+  },
+  "requiredCapabilities": [
+    "bash",
+    "gnu-coreutils",
+    "apt",
+    "dpkg",
+    "ca-certificates",
+    "locale-en_US.UTF-8",
+    "python3.14",
+    "python3-venv",
+    "python3-pip",
+    "git",
+    "curl",
+    "wget",
+    "openssh-client",
+    "tar",
+    "xz",
+    "iproute2"
+  ],
+  "migration": {
+    "defaultInstallPath": "usr/var/lib/proot-distro/installed-rootfs/ubuntu",
+    "legacyAsset": "terminal/tools/rootfs/legacy/ubuntu-noble-aarch64-pd-v4.18.0.tar.xz",
+    "switchPolicy": "staged-health-check-then-atomic-directory-switch",
+    "userDataPolicy": "explicit-whitelist-rebuild"
+  }
+}

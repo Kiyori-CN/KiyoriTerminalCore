@@ -1,0 +1,16 @@
+ca-certificates
+curl
+file
+git
+iproute2
+less
+locales
+openssh-client
+procps
+python-is-python3
+python3
+python3-pip
+python3-venv
+tar
+wget
+xz-utils

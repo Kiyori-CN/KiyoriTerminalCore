@@ -21,4 +21,16 @@ class SourceManagerTest {
         assertEquals("default", resolveSelectedSourceId("removed", "default", sources))
         assertEquals("default", resolveSelectedSourceId(null, "default", sources))
     }
+
+    @Test
+    fun aptSourceCommandTargetsResolute() {
+        val command = aptSourceDistributionLines(sources.first().url)
+
+        assertEquals(false, command.contains(" noble "))
+        assertEquals(true, command.contains(" resolute "))
+        assertEquals(true, command.contains(" resolute-updates "))
+        assertEquals(true, command.contains(" resolute-backports "))
+        assertEquals(true, command.contains(" resolute-security "))
+    }
+
 }

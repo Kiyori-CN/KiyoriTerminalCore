@@ -10,7 +10,7 @@
     <string name="collapse">Collapse</string>
     <string name="installed">Installed</string>
     <string name="detection_failed">Unable to detect</string>
-    <string name="operit_required">Kiyori Required</string>
+    <string name="kiyori_required">Kiyori Required</string>
     
     <!-- Dialog -->
     <string name="setup_dialog_title">Notice</string>
@@ -33,10 +33,10 @@
     <string name="category_ssh_desc">SSH client and password authentication tools</string>
     
     <!-- Package Items -->
-    <string name="package_nodejs_name">Node.js</string>
-    <string name="package_nodejs_desc">JavaScript runtime</string>
-    <string name="package_pnpm_name">PNPM</string>
-    <string name="package_pnpm_desc">Fast package manager and TypeScript</string>
+    <string name="package_nodejs_name">Node.js 24 LTS</string>
+    <string name="package_nodejs_desc">Node.js 24.20.0 long-term support runtime</string>
+    <string name="package_pnpm_name">PNPM 11 + TypeScript 7</string>
+    <string name="package_pnpm_desc">Installs stable pnpm 11.25.0 and TypeScript 7.0.2</string>
     <string name="package_python_link_name">Python Link</string>
     <string name="package_python_link_desc">Link python command to python3</string>
     <string name="package_python_venv_name">Virtual Environment</string>
@@ -45,10 +45,10 @@
     <string name="package_python_pip_desc">Python package manager</string>
     <string name="package_uv_name">uv</string>
     <string name="package_uv_desc">An extremely fast Python package installer written in Rust</string>
-    <string name="package_openjdk_name">OpenJDK 17</string>
-    <string name="package_openjdk_desc">Java 17 development environment</string>
-    <string name="package_gradle_name">Gradle</string>
-    <string name="package_gradle_desc">Modern build automation tool</string>
+    <string name="package_openjdk_name">OpenJDK 25 LTS</string>
+    <string name="package_openjdk_desc">Java 25 long-term support development environment</string>
+    <string name="package_gradle_name">Gradle 9.7.1</string>
+    <string name="package_gradle_desc">Official Gradle stable release (pinned SHA-256, not Ubuntu\'s 4.4.1 package)</string>
     <string name="package_rust_name">Rust &amp; Cargo</string>
     <string name="package_rust_desc">Install Rust toolchain via rustup</string>
     <string name="package_go_name">Go</string>

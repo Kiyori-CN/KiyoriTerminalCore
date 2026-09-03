@@ -17,8 +17,12 @@ class SetupEnvironmentProbeTest {
         assertTrue(packageCheckCommand(PackageItem("rust", "", "RUST_INSTALL_COMMAND")).contains("cargo --version"))
         val nodeCheck = packageCheckCommand(PackageItem("nodejs", "", "node"))
         assertTrue(nodeCheck.contains("node -v"))
-        assertTrue(nodeCheck.contains("process.versions.node"))
-        assertTrue(nodeCheck.contains("npm --version"))
+        assertTrue(nodeCheck.contains("process.version"))
+        assertTrue(nodeCheck.contains(TerminalEnvironmentContract.NODE_LTS_VERSION))
+        assertTrue(nodeCheck.contains("npm\" --version"))
+        assertTrue(nodeCheck.contains(TerminalEnvironmentContract.NODE_NPM_VERSION))
+        assertTrue(packageCheckCommand(PackageItem("openjdk-25", "", "openjdk-25-jdk")).contains("version"))
+        assertTrue(packageCheckCommand(PackageItem("gradle", "", "gradle")).contains("Gradle ${TerminalEnvironmentContract.GRADLE_VERSION}"))
         assertTrue(packageCheckCommand(PackageItem("pnpm", "", "typescript")) == TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND)
     }
 
@@ -53,7 +57,58 @@ class SetupEnvironmentProbeTest {
         val packageItem = PackageItem("nodejs", "", "node")
 
         assertTrue(checkPackageInstalled(HiddenExecResult("v24.20.0", 0), packageItem))
+        assertFalse(checkPackageInstalled(HiddenExecResult("v24.19.0", 0), packageItem))
         assertFalse(checkPackageInstalled(HiddenExecResult("v20.19.0", 0), packageItem))
+    }
+
+    @Test
+    fun gradleAndJavaReadinessRequireThePinnedStableVersions() {
+        assertTrue(
+            checkPackageInstalled(
+                HiddenExecResult("Gradle ${TerminalEnvironmentContract.GRADLE_VERSION}\n", 0),
+                PackageItem("gradle", "", "gradle"),
+            )
+        )
+        assertFalse(
+            checkPackageInstalled(
+                HiddenExecResult("Gradle 4.4.1\n", 0),
+                PackageItem("gradle", "", "gradle"),
+            )
+        )
+        assertTrue(
+            checkPackageInstalled(
+                HiddenExecResult("openjdk version \"25.0.4\"\n", 0),
+                PackageItem("openjdk-25", "", "openjdk-25-jdk"),
+            )
+        )
+    }
+
+    @Test
+    fun selectingGradleAddsTheRequiredOpenJdkWhenItIsMissingOrUnknown() {
+        assertTrue(
+            openJdkRequiredByGradle(
+                selectedPackages = mapOf("gradle" to true),
+                packageStatus = mapOf(TerminalEnvironmentContract.OPENJDK_PACKAGE_ID to InstallStatus.NOT_INSTALLED),
+            )
+        )
+        assertTrue(
+            openJdkRequiredByGradle(
+                selectedPackages = mapOf("gradle" to true),
+                packageStatus = mapOf(TerminalEnvironmentContract.OPENJDK_PACKAGE_ID to InstallStatus.UNKNOWN),
+            )
+        )
+        assertFalse(
+            openJdkRequiredByGradle(
+                selectedPackages = mapOf("gradle" to true),
+                packageStatus = mapOf(TerminalEnvironmentContract.OPENJDK_PACKAGE_ID to InstallStatus.INSTALLED),
+            )
+        )
+        assertFalse(
+            openJdkRequiredByGradle(
+                selectedPackages = mapOf("gradle" to false),
+                packageStatus = mapOf(TerminalEnvironmentContract.OPENJDK_PACKAGE_ID to InstallStatus.NOT_INSTALLED),
+            )
+        )
     }
 
     @Test

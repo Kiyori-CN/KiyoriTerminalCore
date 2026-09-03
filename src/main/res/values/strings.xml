@@ -10,7 +10,7 @@
     <string name="collapse">收起</string>
     <string name="installed">已安装</string>
     <string name="detection_failed">无法识别</string>
-    <string name="operit_required">Kiyori 必须</string>
+    <string name="kiyori_required">Kiyori 必须</string>
     
     <!-- Dialog -->
     <string name="setup_dialog_title">温馨提示</string>
@@ -33,10 +33,10 @@
     <string name="category_ssh_desc">SSH 客户端和密码认证工具</string>
     
     <!-- Package Items -->
-    <string name="package_nodejs_name">Node.js</string>
-    <string name="package_nodejs_desc">JavaScript 运行时</string>
-    <string name="package_pnpm_name">PNPM</string>
-    <string name="package_pnpm_desc">快速的包管理器和 TypeScript</string>
+    <string name="package_nodejs_name">Node.js 24 LTS</string>
+    <string name="package_nodejs_desc">Node.js 24.20.0 长期支持版运行时</string>
+    <string name="package_pnpm_name">PNPM 11 + TypeScript 7</string>
+    <string name="package_pnpm_desc">安装稳定版 pnpm 11.25.0 和 TypeScript 7.0.2</string>
     <string name="package_python_link_name">Python 链接</string>
     <string name="package_python_link_desc">将python命令链接到python3</string>
     <string name="package_python_venv_name">虚拟环境</string>
@@ -45,10 +45,10 @@
     <string name="package_python_pip_desc">Python 包管理器</string>
     <string name="package_uv_name">uv</string>
     <string name="package_uv_desc">一个用 Rust 编写的极速 Python 包安装器</string>
-    <string name="package_openjdk_name">OpenJDK 17</string>
-    <string name="package_openjdk_desc">Java 17 开发环境</string>
-    <string name="package_gradle_name">Gradle</string>
-    <string name="package_gradle_desc">现代化的构建自动化工具</string>
+    <string name="package_openjdk_name">OpenJDK 25 LTS</string>
+    <string name="package_openjdk_desc">Java 25 长期支持版开发环境</string>
+    <string name="package_gradle_name">Gradle 9.7.1</string>
+    <string name="package_gradle_desc">Gradle 官方稳定版（固定 SHA-256，避免 Ubuntu 4.4.1 旧包）</string>
     <string name="package_rust_name">Rust &amp; Cargo</string>
     <string name="package_rust_desc">通过 rustup 安装 Rust 工具链</string>
     <string name="package_go_name">Go</string>

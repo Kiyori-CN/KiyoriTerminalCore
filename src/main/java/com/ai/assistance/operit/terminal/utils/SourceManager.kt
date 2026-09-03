@@ -141,10 +141,7 @@ class SourceManager(context: Context) {
         change_ubuntu_source(){
           cat <<'EOF' > ${'$'}UBUNTU_PATH/etc/apt/sources.list
         # From Kiyori Settings - ${source.name}
-        deb ${sourceUrl} noble main restricted universe multiverse
-        deb ${sourceUrl} noble-updates main restricted universe multiverse
-        deb ${sourceUrl} noble-backports main restricted universe multiverse
-        deb ${sourceUrl} noble-security main restricted universe multiverse
+        ${aptSourceDistributionLines(sourceUrl)}
         EOF
           echo "APT source changed to: ${source.name}"
         }
@@ -215,6 +212,14 @@ class SourceManager(context: Context) {
         const val TAG = "SourceManager"
     }
 }
+
+internal fun aptSourceDistributionLines(sourceUrl: String): String =
+    """
+    deb $sourceUrl resolute main restricted universe multiverse
+    deb $sourceUrl resolute-updates main restricted universe multiverse
+    deb $sourceUrl resolute-backports main restricted universe multiverse
+    deb $sourceUrl resolute-security main restricted universe multiverse
+    """.trimIndent()
 
 /**
  * Resolves a persisted source ID against the current source catalog and restores the required

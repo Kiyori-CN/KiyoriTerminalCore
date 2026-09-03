@@ -9,7 +9,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CompletableDeferred
 import java.io.File
 import java.io.IOException
+import java.io.FileInputStream
+import java.security.MessageDigest
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineStart
@@ -37,6 +40,7 @@ import kotlinx.coroutines.sync.withLock
 import com.ai.assistance.operit.terminal.data.PackageManagerType
 import com.ai.assistance.operit.terminal.data.SessionInitState
 import com.ai.assistance.operit.terminal.utils.SourceManager
+import com.ai.assistance.operit.terminal.utils.UbuntuRootfsManifest
 import com.ai.assistance.operit.terminal.utils.SSHConfigManager
 import com.ai.assistance.operit.terminal.utils.SSHDServerManager
 import com.ai.assistance.operit.terminal.provider.filesystem.FileSystemProvider
@@ -145,7 +149,8 @@ class TerminalManager private constructor(
         }
 
         private const val TAG = "TerminalManager"
-        private const val UBUNTU_FILENAME = "ubuntu-noble-aarch64-pd-v4.18.0.tar.xz"
+        private const val UBUNTU_FILENAME = "ubuntu-resolute-arm64-kiyori-v1.tar.xz"
+        private const val UBUNTU_MANIFEST_FILENAME = "ubuntu-rootfs-manifest.json"
         private const val MAX_HISTORY_ITEMS = 500
         private const val MAX_OUTPUT_LINES_PER_ITEM = 1000
         private const val TERMINAL_ENTER = "\r"
@@ -1271,41 +1276,94 @@ class TerminalManager private constructor(
         Files.createSymbolicLink(linkFile.toPath(), targetPath)
     }
 
-    private fun extractAssets() {
-        try {
-            val assets = listOf(
-                UBUNTU_FILENAME,
-                "setup_fake_sysdata.sh"
-            )
-            assets.forEach { assetName ->
-                val assetFile = File(filesDir, assetName)
-                // 强制更新脚本文件，大文件只在不存在时提取
-                val shouldExtract = !assetFile.exists() || assetName == "setup_fake_sysdata.sh"
+    private fun readUbuntuRootfsManifest(): UbuntuRootfsManifest {
+        val json = application.assets.open(UBUNTU_MANIFEST_FILENAME).use { input ->
+            input.bufferedReader(Charsets.UTF_8).readText()
+        }
+        return UbuntuRootfsManifest.parse(json)
+    }
 
-                if (shouldExtract) {
-                    if (assetName.endsWith(".sh")) {
-                        application.assets.open(assetName).use { input ->
-                            val raw = input.readBytes()
-                            val text = raw.toString(Charsets.UTF_8)
-                            val normalized =
-                                text
-                                    .removePrefix("\uFEFF")
-                                    .replace("\r\n", "\n")
-                                    .replace("\r", "\n")
-                            assetFile.writeText(normalized, Charsets.UTF_8)
-                        }
-                    } else {
-                        application.assets.open(assetName).use { input ->
-                            assetFile.outputStream().use { output ->
-                                input.copyTo(output)
-                            }
-                        }
+    private fun sha256Hex(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    }
+
+    private fun materializeVerifiedAsset(manifest: UbuntuRootfsManifest): File {
+        val destination = File(filesDir, manifest.assetFilename)
+        if (destination.isFile && destination.length() == manifest.compressedBytes) {
+            val existingHash = sha256Hex(destination)
+            if (existingHash == manifest.assetSha256) {
+                Log.d(TAG, "Verified existing Ubuntu rootfs asset: ${destination.absolutePath}")
+                return destination
+            }
+            Log.w(TAG, "Existing Ubuntu rootfs asset hash mismatch; replacing it atomically")
+        }
+
+        val temporary = File(filesDir, ".${manifest.assetFilename}.tmp-${UUID.randomUUID()}")
+        try {
+            var copiedBytes = 0L
+            application.assets.open(manifest.assetFilename).use { input ->
+                temporary.outputStream().use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        copiedBytes += read
                     }
-                    Log.d(TAG, "Extracted $assetName")
-                } else {
-                    Log.d(TAG, "Asset $assetName already exists.")
+                    output.flush()
                 }
             }
+            require(copiedBytes == manifest.compressedBytes) {
+                "Ubuntu rootfs asset size mismatch: expected=${manifest.compressedBytes} actual=$copiedBytes"
+            }
+            require(sha256Hex(temporary) == manifest.assetSha256) {
+                "Ubuntu rootfs asset SHA-256 mismatch after extraction"
+            }
+            Files.move(
+                temporary.toPath(),
+                destination.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+            Log.d(TAG, "Materialized verified Ubuntu rootfs asset: ${destination.absolutePath}")
+            return destination
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to materialize verified Ubuntu rootfs asset", e)
+            throw e
+        } finally {
+            Files.deleteIfExists(temporary.toPath())
+        }
+    }
+
+    private fun extractAssets() {
+        try {
+            val manifest = readUbuntuRootfsManifest()
+            require(manifest.assetFilename == UBUNTU_FILENAME) {
+                "Manifest asset does not match the terminal runtime contract"
+            }
+            materializeVerifiedAsset(manifest)
+
+            val scriptFile = File(filesDir, "setup_fake_sysdata.sh")
+            application.assets.open("setup_fake_sysdata.sh").use { input ->
+                val raw = input.readBytes()
+                val text = raw.toString(Charsets.UTF_8)
+                val normalized =
+                    text
+                        .removePrefix("\uFEFF")
+                        .replace("\r\n", "\n")
+                        .replace("\r", "\n")
+                scriptFile.writeText(normalized, Charsets.UTF_8)
+            }
+            Log.d(TAG, "Refreshed setup_fake_sysdata.sh")
         } catch (e: IOException) {
             Log.e(TAG, "Failed to extract assets", e)
             throw e
@@ -1313,7 +1371,8 @@ class TerminalManager private constructor(
     }
 
     private fun generateStartScript(): String {
-        val ubuntuName = UBUNTU_FILENAME.replace(Regex("-pd.*"), "")
+        val manifest = readUbuntuRootfsManifest()
+        val ubuntuName = "ubuntu-${manifest.codename}-aarch64"
         val tmpDir = File(filesDir, "tmp").absolutePath
         val binDir = binDir.absolutePath
         val homeDir = filesDir.absolutePath
@@ -1541,98 +1600,391 @@ EOF
 
         val installUbuntu = """
         install_ubuntu(){
-          OK_FILE="${'$'}UBUNTU_PATH/.operit_installed_ok"
+          OK_FILE="${'$'}UBUNTU_PATH/${manifest.installedMarkerFilename}"
+          MANIFEST_FILE="${'$'}UBUNTU_PATH/${manifest.manifestFilename}"
+          LEGACY_OK_FILE="${'$'}UBUNTU_PATH/${manifest.legacyInstalledMarkerFilename}"
           LOCK_DIR="${'$'}UBUNTU_PATH.install.lock"
           LOCK_PID_FILE="${'$'}LOCK_DIR/pid"
           TMP_DIR="${'$'}UBUNTU_PATH.install.tmp"
+          BACKUP_DIR="${'$'}UBUNTU_PATH.backup.${'$'}${'$'}"
 
           UBUNTU_PARENT="${'$'}{UBUNTU_PATH%/*}"
-          mkdir -p "${'$'}UBUNTU_PARENT" 2>/dev/null
+          if ! mkdir -p "${'$'}UBUNTU_PARENT" 2>/dev/null; then
+            progress_echo "Ubuntu install directory is not writable"
+            return 1
+          fi
 
           attempt=0
           while true; do
             if mkdir "${'$'}LOCK_DIR" 2>/dev/null; then
-              echo "${'$'}${'$'}" > "${'$'}LOCK_PID_FILE" 2>/dev/null || true
-              break
+              if printf '%s\n' "${'$'}${'$'}" > "${'$'}LOCK_PID_FILE" 2>/dev/null; then
+                break
+              fi
+              rmdir "${'$'}LOCK_DIR" 2>/dev/null || true
+              progress_echo "Ubuntu install lock initialization failed"
+              return 1
             fi
 
+            lock_pid=""
             if [ -f "${'$'}LOCK_PID_FILE" ]; then
               lock_pid=${'$'}(cat "${'$'}LOCK_PID_FILE" 2>/dev/null)
-              if [ -z "${'$'}lock_pid" ]; then
-                if [ "${'$'}attempt" -gt 2 ]; then
-                  rm -rf "${'$'}LOCK_DIR" 2>/dev/null
+              if [ -n "${'$'}lock_pid" ] && ! kill -0 "${'$'}lock_pid" 2>/dev/null; then
+                observed_lock_pid="${'$'}lock_pid"
+                current_lock_pid=${'$'}(cat "${'$'}LOCK_PID_FILE" 2>/dev/null)
+                if [ "${'$'}current_lock_pid" = "${'$'}observed_lock_pid" ]; then
+                  rm -rf "${'$'}LOCK_DIR" 2>/dev/null || true
                   continue
                 fi
-              elif ! kill -0 "${'$'}lock_pid" 2>/dev/null; then
-                rm -rf "${'$'}LOCK_DIR" 2>/dev/null
-                continue
-              fi
-            else
-              if [ "${'$'}attempt" -gt 2 ]; then
-                rm -rf "${'$'}LOCK_DIR" 2>/dev/null
-                continue
               fi
             fi
 
             attempt=${'$'}((attempt + 1))
             if [ "${'$'}attempt" -gt 120 ]; then
-              progress_echo "Ubuntu install lock timeout"
+              if [ -n "${'$'}lock_pid" ]; then
+                progress_echo "Ubuntu install lock timeout (pid=${'$'}lock_pid)"
+              else
+                progress_echo "Ubuntu install lock timeout (owner unavailable)"
+              fi
               return 1
             fi
             sleep 1
           done
 
           cleanup_install(){
-            rm -rf "${'$'}TMP_DIR" 2>/dev/null
-            rm -rf "${'$'}LOCK_DIR" 2>/dev/null
+            owns_lock=0
+            if [ -f "${'$'}LOCK_PID_FILE" ] && [ "${'$'}(cat "${'$'}LOCK_PID_FILE" 2>/dev/null)" = "${'$'}${'$'}" ]; then
+              owns_lock=1
+            fi
+            if [ "${'$'}owns_lock" -eq 1 ]; then
+              rm -rf "${'$'}TMP_DIR" 2>/dev/null
+              rm -rf "${'$'}LOCK_DIR" 2>/dev/null
+            fi
           }
           trap 'cleanup_install' EXIT INT TERM
 
-          if [ -f "${'$'}OK_FILE" ]; then
+          append_staging_failure(){
+            if [ -z "${'$'}staging_failure" ]; then
+              staging_failure="${'$'}1"
+            else
+              staging_failure="${'$'}staging_failure; ${'$'}1"
+            fi
+          }
+          report_staging_path(){
+            staging_label="${'$'}1"
+            staging_path="${'$'}2"
+            if [ -L "${'$'}staging_path" ]; then
+              staging_target=""
+              if ! staging_target=${'$'}("${'$'}BIN/busybox" readlink "${'$'}staging_path" 2>/dev/null); then
+                staging_target="<unreadable>"
+              fi
+              printf 'Ubuntu staging %s: symlink -> %s\n' "${'$'}staging_label" "${'$'}staging_target"
+            elif [ -e "${'$'}staging_path" ]; then
+              staging_mode=""
+              if ! staging_mode=${'$'}("${'$'}BIN/busybox" stat -c '%a' "${'$'}staging_path" 2>/dev/null); then
+                staging_mode="<unavailable>"
+              fi
+              printf 'Ubuntu staging %s: present mode=%s\n' "${'$'}staging_label" "${'$'}staging_mode"
+            else
+              printf 'Ubuntu staging %s: missing\n' "${'$'}staging_label"
+            fi
+          }
+          has_owner_execute_bit(){
+            executable_mode=""
+            if ! executable_mode=${'$'}("${'$'}BIN/busybox" stat -c '%a' "${'$'}1" 2>/dev/null); then
+              return 1
+            fi
+            # Android's test -x/access(X_OK) can reject an app-data rootfs path even when the
+            # archive mode is correct.  Match stat's three- or four-digit octal form directly so
+            # staging verifies the owner execute bit without weakening the required file mode.
+            case "${'$'}executable_mode" in
+              [1357][0-7][0-7]|[0-7][1357][0-7][0-7]) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          staging_health_check(){
+            staging_failure=""
+            if [ ! -e "${'$'}TMP_DIR/etc" ] && [ ! -L "${'$'}TMP_DIR/etc" ]; then
+              append_staging_failure "missing etc directory"
+            fi
+            if [ ! -e "${'$'}TMP_DIR/usr" ] && [ ! -L "${'$'}TMP_DIR/usr" ]; then
+              append_staging_failure "missing usr directory"
+            fi
+
+            if [ ! -e "${'$'}TMP_DIR/etc/os-release" ] && [ ! -L "${'$'}TMP_DIR/etc/os-release" ]; then
+              append_staging_failure "missing etc/os-release"
+            elif ! grep -Fx 'VERSION_ID="26.04"' "${'$'}TMP_DIR/etc/os-release" >/dev/null 2>&1; then
+              append_staging_failure "VERSION_ID mismatch or unreadable etc/os-release"
+            fi
+            if [ -e "${'$'}TMP_DIR/etc/os-release" ] || [ -L "${'$'}TMP_DIR/etc/os-release" ]; then
+              if ! grep -Fx 'VERSION_CODENAME=${manifest.codename}' "${'$'}TMP_DIR/etc/os-release" >/dev/null 2>&1; then
+                append_staging_failure "VERSION_CODENAME mismatch or unreadable etc/os-release"
+              fi
+            fi
+
+            if [ ! -e "${'$'}TMP_DIR/bin/bash" ] && [ ! -L "${'$'}TMP_DIR/bin/bash" ]; then
+              append_staging_failure "missing bin/bash"
+            elif ! has_owner_execute_bit "${'$'}TMP_DIR/bin/bash"; then
+              append_staging_failure "bin/bash is not executable"
+            fi
+            if [ ! -e "${'$'}TMP_DIR/usr/bin/env" ] && [ ! -L "${'$'}TMP_DIR/usr/bin/env" ]; then
+              append_staging_failure "missing usr/bin/env"
+            elif ! has_owner_execute_bit "${'$'}TMP_DIR/usr/bin/env"; then
+              append_staging_failure "usr/bin/env is not executable"
+            fi
+
+            if [ -n "${'$'}staging_failure" ]; then
+              progress_echo "Ubuntu rootfs staging health check failed"
+              printf 'Ubuntu rootfs staging failure(s): %s\n' "${'$'}staging_failure"
+              report_staging_path 'root' "${'$'}TMP_DIR"
+              report_staging_path 'bin' "${'$'}TMP_DIR/bin"
+              report_staging_path 'bin/bash' "${'$'}TMP_DIR/bin/bash"
+              report_staging_path 'etc' "${'$'}TMP_DIR/etc"
+              report_staging_path 'etc/os-release' "${'$'}TMP_DIR/etc/os-release"
+              report_staging_path 'usr/lib/os-release' "${'$'}TMP_DIR/usr/lib/os-release"
+              report_staging_path 'usr' "${'$'}TMP_DIR/usr"
+              report_staging_path 'usr/bin' "${'$'}TMP_DIR/usr/bin"
+              report_staging_path 'usr/bin/bash' "${'$'}TMP_DIR/usr/bin/bash"
+              report_staging_path 'usr/bin/env' "${'$'}TMP_DIR/usr/bin/env"
+              report_staging_path 'usr/bin/gnuenv' "${'$'}TMP_DIR/usr/bin/gnuenv"
+              printf 'Ubuntu staging root entries:\n'
+              if ! "${'$'}BIN/busybox" ls -la "${'$'}TMP_DIR" 2>/dev/null; then
+                printf 'Ubuntu staging root entries: unavailable\n'
+              fi
+              if [ -r "${'$'}TMP_DIR/etc/os-release" ]; then
+                printf 'Ubuntu staging os-release preview:\n'
+                "${'$'}BIN/busybox" sed -n '1,12p' "${'$'}TMP_DIR/etc/os-release" 2>/dev/null
+              fi
+              return 1
+            fi
+            return 0
+          }
+
+          validate_rootfs_identity(){
+            identity_file="${'$'}1"
+            [ ! -L "${'$'}identity_file" ] && [ -f "${'$'}identity_file" ] || return 1
+            grep -Fx 'ok' "${'$'}identity_file" >/dev/null 2>&1 || return 1
+            grep -Fx 'schema=kiyori.rootfs.manifest.v1' "${'$'}identity_file" >/dev/null 2>&1 || return 1
+            grep -Fx 'distribution=ubuntu' "${'$'}identity_file" >/dev/null 2>&1 || return 1
+            grep -Fx 'release=${manifest.release}' "${'$'}identity_file" >/dev/null 2>&1 || return 1
+            grep -Fx 'codename=${manifest.codename}' "${'$'}identity_file" >/dev/null 2>&1 || return 1
+            grep -Fx 'architecture=${manifest.architecture}' "${'$'}identity_file" >/dev/null 2>&1 || return 1
+            grep -Fx 'asset-sha256=${manifest.assetSha256}' "${'$'}identity_file" >/dev/null 2>&1 || return 1
+          }
+
+          write_rootfs_identity(){
+            identity_file="${'$'}1"
+            identity_tmp="${'$'}{identity_file}.tmp-${'$'}${'$'}"
+            [ ! -L "${'$'}identity_file" ] || return 1
+            if ! {
+              printf '%s\n' 'ok'
+              printf '%s\n' 'schema=kiyori.rootfs.manifest.v1'
+              printf '%s\n' 'distribution=ubuntu'
+              printf '%s\n' 'release=${manifest.release}'
+              printf '%s\n' 'codename=${manifest.codename}'
+              printf '%s\n' 'architecture=${manifest.architecture}'
+              printf '%s\n' 'asset-sha256=${manifest.assetSha256}'
+            } > "${'$'}identity_tmp"; then
+              rm -f "${'$'}identity_tmp" 2>/dev/null || true
+              return 1
+            fi
+            if ! chmod 0644 "${'$'}identity_tmp" 2>/dev/null; then
+              rm -f "${'$'}identity_tmp" 2>/dev/null || true
+              return 1
+            fi
+            if ! mv -f "${'$'}identity_tmp" "${'$'}identity_file" 2>/dev/null; then
+              rm -f "${'$'}identity_tmp" 2>/dev/null || true
+              return 1
+            fi
+            validate_rootfs_identity "${'$'}identity_file"
+          }
+
+          migrate_legacy_marker(){
+            if [ ! -e "${'$'}LEGACY_OK_FILE" ] && [ ! -L "${'$'}LEGACY_OK_FILE" ]; then
+              return 0
+            fi
+            if [ -L "${'$'}LEGACY_OK_FILE" ] || [ ! -f "${'$'}LEGACY_OK_FILE" ]; then
+              progress_echo "Ubuntu installation marker migration rejected: legacy marker is not a regular file"
+              return 1
+            fi
+            if ! validate_rootfs_identity "${'$'}LEGACY_OK_FILE"; then
+              progress_echo "Ubuntu installation marker migration rejected: legacy marker is invalid"
+              return 1
+            fi
+            if [ -e "${'$'}OK_FILE" ] || [ -L "${'$'}OK_FILE" ]; then
+              if ! validate_rootfs_identity "${'$'}OK_FILE"; then
+                progress_echo "Ubuntu installation marker migration rejected: active marker conflicts"
+                return 1
+              fi
+            elif ! write_rootfs_identity "${'$'}OK_FILE"; then
+              progress_echo "Ubuntu installation marker migration failed while writing the active marker"
+              return 1
+            fi
+            if ! validate_rootfs_identity "${'$'}OK_FILE"; then
+              progress_echo "Ubuntu installation marker migration failed verification"
+              return 1
+            fi
+            if ! rm -f "${'$'}LEGACY_OK_FILE" 2>/dev/null; then
+              progress_echo "Ubuntu installation marker migration failed while removing the legacy marker"
+              return 1
+            fi
+            if [ -e "${'$'}LEGACY_OK_FILE" ] || [ -L "${'$'}LEGACY_OK_FILE" ]; then
+              progress_echo "Ubuntu installation marker migration failed: legacy marker remains"
+              return 1
+            fi
+            progress_echo "Ubuntu installation marker migrated"
+            return 0
+          }
+
+          rootfs_is_current(){
+            [ ! -e "${'$'}LEGACY_OK_FILE" ] && [ ! -L "${'$'}LEGACY_OK_FILE" ] || return 1
+            validate_rootfs_identity "${'$'}OK_FILE" || return 1
+            grep -Fx 'schema=kiyori.rootfs.manifest.v1' "${'$'}MANIFEST_FILE" >/dev/null 2>&1 || return 1
+            grep -Fx 'distribution=ubuntu' "${'$'}MANIFEST_FILE" >/dev/null 2>&1 || return 1
+            grep -Fx 'release=${manifest.release}' "${'$'}MANIFEST_FILE" >/dev/null 2>&1 || return 1
+            grep -Fx 'codename=${manifest.codename}' "${'$'}MANIFEST_FILE" >/dev/null 2>&1 || return 1
+            grep -Fx 'architecture=${manifest.architecture}' "${'$'}MANIFEST_FILE" >/dev/null 2>&1 || return 1
+            grep -Fx 'asset-sha256=${manifest.assetSha256}' "${'$'}MANIFEST_FILE" >/dev/null 2>&1 || return 1
+            grep -Fx 'VERSION_ID="26.04"' "${'$'}UBUNTU_PATH/etc/os-release" >/dev/null 2>&1 || return 1
+            grep -Fx 'VERSION_CODENAME=${manifest.codename}' "${'$'}UBUNTU_PATH/etc/os-release" >/dev/null 2>&1 || return 1
+            has_owner_execute_bit "${'$'}UBUNTU_PATH/bin/bash" || return 1
+            has_owner_execute_bit "${'$'}UBUNTU_PATH/usr/bin/env" || return 1
+          }
+
+          migrate_root_data(){
+            [ -d "${'$'}UBUNTU_PATH/root" ] || return 0
+            mkdir -p "${'$'}TMP_DIR/root" 2>/dev/null
+            # Preserve user projects and shell/tool configuration, but do not carry the old Python
+            # virtual environment or transient caches across the ABI/runtime boundary.
+            for entry in "${'$'}UBUNTU_PATH/root"/* "${'$'}UBUNTU_PATH/root"/.[!.]*; do
+              [ -e "${'$'}entry" ] || [ -L "${'$'}entry" ] || continue
+              name=${'$'}{entry##*/}
+              case "${'$'}name" in
+                .cache|.code_runner/py|pyvenv.cfg) continue ;;
+              esac
+              case "${'$'}name" in
+                .code_runner)
+                  mkdir -p "${'$'}TMP_DIR/root/.code_runner" 2>/dev/null
+                  for child in "${'$'}entry"/* "${'$'}entry"/.[!.]*; do
+                    [ -e "${'$'}child" ] || [ -L "${'$'}child" ] || continue
+                    child_name=${'$'}{child##*/}
+                    [ "${'$'}child_name" = "py" ] && continue
+                    cp -a "${'$'}child" "${'$'}TMP_DIR/root/.code_runner/" 2>/dev/null || return 1
+                  done
+                  ;;
+                *) cp -a "${'$'}entry" "${'$'}TMP_DIR/root/" 2>/dev/null || return 1 ;;
+              esac
+            done
+          }
+
+          marker_migration_status=0
+          if ! migrate_legacy_marker; then
+            marker_migration_status=1
+            progress_echo "Ubuntu installation marker migration requires a fresh rootfs"
+          fi
+
+          if [ "${'$'}marker_migration_status" -eq 0 ] && rootfs_is_current; then
             VERSION=`cat ${'$'}UBUNTU_PATH/etc/issue.net 2>/dev/null`
             progress_echo "Ubuntu ${'$'}L_INSTALLED -> ${'$'}VERSION"
           else
-            if [ -f "${'$'}UBUNTU_PATH/etc/issue.net" ]; then
-              echo "ok" > "${'$'}OK_FILE" 2>/dev/null || true
-              VERSION=`cat ${'$'}UBUNTU_PATH/etc/issue.net 2>/dev/null`
-              progress_echo "Ubuntu ${'$'}L_INSTALLED -> ${'$'}VERSION"
-            else
-              progress_echo "Ubuntu ${'$'}L_NOT_INSTALLED, ${'$'}L_INSTALLING..."
-              if [ ! -f "${'$'}HOME/${'$'}UBUNTU" ]; then
-                cleanup_install
-                trap - EXIT INT TERM
-                return 1
-              fi
-              rm -rf "${'$'}TMP_DIR" 2>/dev/null
-              mkdir -p "${'$'}TMP_DIR" 2>/dev/null
-              progress_echo "Extracting Ubuntu rootfs..."
-              busybox tar xf "${'$'}HOME/${'$'}UBUNTU" -C "${'$'}TMP_DIR"/ >/dev/null 2>&1
-              if [ ${'$'}? -ne 0 ]; then
-                cleanup_install
-                trap - EXIT INT TERM
-                return 1
-              fi
-              echo "Extraction complete"
-              if [ -d "${'$'}TMP_DIR/${'$'}UBUNTU_NAME" ]; then
-                mv "${'$'}TMP_DIR/${'$'}UBUNTU_NAME"/* "${'$'}TMP_DIR"/ 2>/dev/null
-                rm -rf "${'$'}TMP_DIR/${'$'}UBUNTU_NAME" 2>/dev/null
-              fi
-
-              mkdir -p "${'$'}TMP_DIR/root" 2>/dev/null
-              echo 'export ANDROID_DATA=/home/' >> "${'$'}TMP_DIR/root/.bashrc"
-              mkdir -p "${'$'}TMP_DIR/etc" 2>/dev/null
-              write_default_dns "${'$'}TMP_DIR/etc/resolv.conf"
-              echo "ok" > "${'$'}TMP_DIR/.operit_installed_ok" 2>/dev/null || true
-
-              rm -rf "${'$'}UBUNTU_PATH" 2>/dev/null
-              mv "${'$'}TMP_DIR" "${'$'}UBUNTU_PATH" 2>/dev/null
-              if [ ${'$'}? -ne 0 ]; then
-                cleanup_install
-                trap - EXIT INT TERM
-                return 1
-              fi
-              rm -f "${'$'}HOME/${'$'}UBUNTU" 2>/dev/null
+            progress_echo "Ubuntu ${'$'}L_NOT_INSTALLED, ${'$'}L_INSTALLING..."
+            if [ ! -f "${'$'}HOME/${'$'}UBUNTU" ]; then
+              cleanup_install
+              trap - EXIT INT TERM
+              return 1
             fi
+            rm -rf "${'$'}TMP_DIR" 2>/dev/null
+            mkdir -p "${'$'}TMP_DIR" 2>/dev/null
+            progress_echo "Extracting Ubuntu rootfs..."
+            # Android app processes commonly use umask 077.  BusyBox tar applies that mask while
+            # creating archive entries, which turns the rootfs' 0755 executables into 0700 files
+            # and makes the shell executable gate fail for the terminal runtime.  Isolate a
+            # standard 022 umask to extraction so archive modes are retained without changing the
+            # caller's umask for migration, setup, or interactive commands.
+            if ( umask 022; busybox tar xf "${'$'}HOME/${'$'}UBUNTU" -C "${'$'}TMP_DIR"/ ); then
+              echo "Extraction complete"
+              progress_echo "Ubuntu rootfs extracted; finalizing installation..."
+            else
+              extraction_status=${'$'}?
+              progress_echo "Ubuntu rootfs extraction failed (exit=${'$'}extraction_status)"
+              cleanup_install
+              trap - EXIT INT TERM
+              return 1
+            fi
+
+            if ! staging_health_check; then
+              cleanup_install
+              trap - EXIT INT TERM
+              return 1
+            fi
+
+            progress_echo "Migrating Ubuntu user data..."
+            if ! migrate_root_data; then
+              progress_echo "Ubuntu root data migration failed"
+              cleanup_install
+              trap - EXIT INT TERM
+              return 1
+            fi
+            echo 'export ANDROID_DATA=/home/' >> "${'$'}TMP_DIR/root/.bashrc"
+            mkdir -p "${'$'}TMP_DIR/etc" 2>/dev/null
+            progress_echo "Preparing Ubuntu network settings..."
+            if ! write_default_dns "${'$'}TMP_DIR/etc/resolv.conf"; then
+              progress_echo "Ubuntu DNS initialization failed"
+              cleanup_install
+              trap - EXIT INT TERM
+              return 1
+            fi
+            if ! write_rootfs_identity "${'$'}TMP_DIR/${manifest.installedMarkerFilename}" ||
+              ! write_rootfs_identity "${'$'}TMP_DIR/${manifest.manifestFilename}"; then
+              progress_echo "Ubuntu rootfs marker write failed"
+              cleanup_install
+              trap - EXIT INT TERM
+              return 1
+            fi
+
+            backup_suffix=0
+            while [ -e "${'$'}BACKUP_DIR" ] || [ -L "${'$'}BACKUP_DIR" ]; do
+              backup_suffix=${'$'}((backup_suffix + 1))
+              BACKUP_DIR="${'$'}UBUNTU_PATH.backup.${'$'}${'$'}.${'$'}backup_suffix"
+            done
+
+            restore_backup(){
+              if [ -e "${'$'}UBUNTU_PATH" ] || [ -L "${'$'}UBUNTU_PATH" ]; then
+                rm -rf "${'$'}UBUNTU_PATH" 2>/dev/null || return 1
+              fi
+              if [ -e "${'$'}BACKUP_DIR" ] || [ -L "${'$'}BACKUP_DIR" ]; then
+                mv "${'$'}BACKUP_DIR" "${'$'}UBUNTU_PATH" 2>/dev/null || return 1
+              fi
+              return 0
+            }
+
+            if [ -e "${'$'}UBUNTU_PATH" ] || [ -L "${'$'}UBUNTU_PATH" ]; then
+              if ! mv "${'$'}UBUNTU_PATH" "${'$'}BACKUP_DIR" 2>/dev/null; then
+                progress_echo "Ubuntu rootfs backup move failed"
+                cleanup_install
+                trap - EXIT INT TERM
+                return 1
+              fi
+            fi
+            if ! mv "${'$'}TMP_DIR" "${'$'}UBUNTU_PATH" 2>/dev/null; then
+              progress_echo "Ubuntu rootfs activation move failed"
+              if ! restore_backup; then
+                progress_echo "Ubuntu rootfs rollback failed; backup retained at ${'$'}BACKUP_DIR"
+              fi
+              cleanup_install
+              trap - EXIT INT TERM
+              return 1
+            fi
+            if ! rootfs_is_current; then
+              progress_echo "Ubuntu rootfs health check failed after activation"
+              if ! restore_backup; then
+                progress_echo "Ubuntu rootfs rollback failed; backup retained at ${'$'}BACKUP_DIR"
+              fi
+              cleanup_install
+              trap - EXIT INT TERM
+              return 1
+            fi
+            progress_echo "Ubuntu rootfs installed"
+            rm -f "${'$'}HOME/${'$'}UBUNTU" 2>/dev/null
           fi
 
           mkdir -p ${'$'}UBUNTU_PATH/etc 2>/dev/null
@@ -1648,10 +2000,10 @@ EOF
           # 配置APT源
           cat <<'EOF' > ${'$'}UBUNTU_PATH/etc/apt/sources.list
         # From Kiyori Settings - ${aptSource.name}
-        deb ${aptSource.url} noble main restricted universe multiverse
-        deb ${aptSource.url} noble-updates main restricted universe multiverse
-        deb ${aptSource.url} noble-backports main restricted universe multiverse
-        deb ${aptSource.url} noble-security main restricted universe multiverse
+        deb ${aptSource.url} ${manifest.codename} main restricted universe multiverse
+        deb ${aptSource.url} ${manifest.codename}-updates main restricted universe multiverse
+        deb ${aptSource.url} ${manifest.codename}-backports main restricted universe multiverse
+        deb ${aptSource.url} ${manifest.codename}-security main restricted universe multiverse
         EOF
           
           # 配置Pip/Uv源
@@ -1832,7 +2184,9 @@ $prootBindSetup
         val sshShell = """
         ssh_shell(){
           set -x
-          install_ubuntu
+          if ! install_ubuntu; then
+            return 1
+          fi
           configure_sources
           fix_permissions
           sleep 1
@@ -1853,7 +2207,9 @@ $prootBindSetup
         $sshShell
         clear_lines
         start_shell(){
-          install_ubuntu
+          if ! install_ubuntu; then
+            return 1
+          fi
           configure_sources
           fix_permissions
           sleep 1

@@ -38,6 +38,16 @@ class TerminalEnvironmentContractTest {
     }
 
     @Test
+    fun rubyUsesTheUbuntuAptPackageContract() {
+        assertEquals("ruby", TerminalEnvironmentContract.RUBY_PACKAGE_ID)
+        assertEquals("ruby", TerminalEnvironmentContract.RUBY_APT_PACKAGE)
+        assertEquals(
+            "DEBIAN_FRONTEND=noninteractive apt-get install -y 'ruby'",
+            TerminalEnvironmentContract.buildAptInstallCommand(listOf(TerminalEnvironmentContract.RUBY_APT_PACKAGE)),
+        )
+    }
+
+    @Test
     fun nodeSetupUsesTheSharedNpmGlobalBin() {
         val commands = TerminalEnvironmentContract.buildNodePackageSetupCommands(
             packages = listOf("typescript"),

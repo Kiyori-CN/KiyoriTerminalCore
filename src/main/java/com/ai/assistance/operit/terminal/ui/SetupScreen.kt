@@ -197,6 +197,20 @@ fun SetupScreen(
                         ),
                     ),
             ),
+            PackageCategory(
+                id = "ruby",
+                name = stringResource(com.ai.assistance.operit.terminal.R.string.category_ruby_name),
+                description = stringResource(com.ai.assistance.operit.terminal.R.string.category_ruby_desc),
+                packages =
+                    listOf(
+                        PackageItem(
+                            TerminalEnvironmentContract.RUBY_PACKAGE_ID,
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_ruby_name),
+                            TerminalEnvironmentContract.RUBY_APT_PACKAGE,
+                            stringResource(com.ai.assistance.operit.terminal.R.string.package_ruby_desc),
+                        ),
+                    ),
+            ),
         )
 
     // 跟踪每个分类的展开状态
@@ -728,6 +742,7 @@ internal fun packageCheckCommand(pkg: PackageItem): String = when (pkg.id) {
             "test \"${'$'}(\"${'$'}HOME/.local/bin/npm\" --version)\" = \"${TerminalEnvironmentContract.NODE_NPM_VERSION}\""
     "pnpm" -> TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
     "go" -> "command -v go"
+    TerminalEnvironmentContract.RUBY_PACKAGE_ID -> "command -v ruby && ruby --version"
     "ssh" -> "command -v ssh"
     "sshpass" -> "command -v sshpass"
     "openssh-server" -> "command -v sshd"
@@ -758,7 +773,7 @@ internal fun checkPackageInstalled(result: HiddenExecResult, pkg: PackageItem): 
         TerminalEnvironmentContract.OPENJDK_PACKAGE_ID ->
             output.lineSequence().any { line -> line.contains("version \"${TerminalEnvironmentContract.GRADLE_REQUIRED_JAVA_MAJOR}.") }
         "python-is-python3", "python3-venv", "python3-pip" -> true
-        "rust", "uv", "go", "ssh", "sshpass", "openssh-server" -> output.isNotBlank()
+        "rust", "uv", "go", TerminalEnvironmentContract.RUBY_PACKAGE_ID, "ssh", "sshpass", "openssh-server" -> output.isNotBlank()
         "gradle" -> TerminalEnvironmentContract.isGradleReady(output)
         "pnpm" -> TerminalEnvironmentContract.isNodeToolchainReady(output)
         else -> output.lineSequence().any { line ->

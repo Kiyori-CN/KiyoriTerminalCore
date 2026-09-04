@@ -24,6 +24,9 @@ class SetupEnvironmentProbeTest {
         assertTrue(packageCheckCommand(PackageItem("openjdk-25", "", "openjdk-25-jdk")).contains("version"))
         assertTrue(packageCheckCommand(PackageItem("gradle", "", "gradle")).contains("Gradle ${TerminalEnvironmentContract.GRADLE_VERSION}"))
         assertTrue(packageCheckCommand(PackageItem("pnpm", "", "typescript")) == TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND)
+        val rubyCheck = packageCheckCommand(PackageItem(TerminalEnvironmentContract.RUBY_PACKAGE_ID, "", TerminalEnvironmentContract.RUBY_APT_PACKAGE))
+        assertTrue(rubyCheck.contains("command -v ruby"))
+        assertTrue(rubyCheck.contains("ruby --version"))
     }
 
     @Test
@@ -50,6 +53,19 @@ class SetupEnvironmentProbeTest {
         val result = HiddenExecResult(output = "/usr/bin/ssh", exitCode = 0)
 
         assertTrue(checkPackageInstalled(result, packageItem))
+    }
+
+    @Test
+    fun rubyProbeRequiresAWorkingInterpreter() {
+        val packageItem = PackageItem(
+            TerminalEnvironmentContract.RUBY_PACKAGE_ID,
+            "",
+            TerminalEnvironmentContract.RUBY_APT_PACKAGE,
+        )
+
+        assertTrue(checkPackageInstalled(HiddenExecResult("/usr/bin/ruby\nruby 3.3.8", 0), packageItem))
+        assertFalse(checkPackageInstalled(HiddenExecResult("ruby: command not found", 127), packageItem))
+        assertFalse(checkPackageInstalled(HiddenExecResult("", 0), packageItem))
     }
 
     @Test

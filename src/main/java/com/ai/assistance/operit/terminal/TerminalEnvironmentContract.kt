@@ -16,6 +16,8 @@ object TerminalEnvironmentContract {
     internal const val GRADLE_REQUIRED_JAVA_MAJOR = 25
     internal const val OPENJDK_PACKAGE_ID = "openjdk-25"
     internal const val OPENJDK_APT_PACKAGE = "openjdk-25-jdk"
+    internal const val RUBY_PACKAGE_ID = "ruby"
+    internal const val RUBY_APT_PACKAGE = "ruby"
     internal const val GRADLE_SHA256 = "acd53f1edaf02f1a8ff99879f8a34b302661a057d9b063ae9e35b552f804d20a"
     internal const val NODE_LTS_SHA256 = "5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7"
     internal const val PIPX_BIN_DIR = "\$HOME/.local/bin"

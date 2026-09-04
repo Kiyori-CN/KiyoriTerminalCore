@@ -32,6 +32,7 @@ import com.ai.assistance.operit.terminal.data.CommandHistoryItem
 import com.ai.assistance.operit.terminal.data.QueuedCommand
 import com.ai.assistance.operit.terminal.view.domain.OutputProcessor
 import java.util.UUID
+import java.util.TimeZone
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.sync.Mutex
@@ -1388,6 +1389,9 @@ class TerminalManager private constructor(
         val operitLegacyDataMountPath = PRootMountMapping.legacyAppDataPath(operitPackage)
         val localTmpPath = PRootMountMapping.localTmpPath()
         val guestSdcardPath = PRootMountMapping.guestSdcardPath()
+        // Pass the Android host zone explicitly because every Ubuntu launch uses env -i and
+        // therefore cannot inherit the device timezone from the parent process.
+        val hostTimeZone = TimeZone.getDefault().id
 
         // 获取当前选择的源
         val aptSource = sourceManager.getSelectedSource(PackageManagerType.APT)
@@ -1490,6 +1494,7 @@ EOF
                   SHELL=/bin/bash \
                   TERM=xterm-256color \
                   LANG=en_US.UTF-8 \
+                  TZ=$hostTimeZone \
                   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                   /bin/bash --noprofile --norc -c 'exit 0' 2>&1
             )"
@@ -1509,6 +1514,7 @@ EOF
                   SHELL=/bin/bash \
                   TERM=xterm-256color \
                   LANG=en_US.UTF-8 \
+                  TZ=$hostTimeZone \
                   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                   /bin/bash --noprofile --norc -c 'exit 0' 2>&1
             )"
@@ -1557,6 +1563,7 @@ EOF
               SHELL=/bin/bash \
               TERM=xterm-256color \
               LANG=en_US.UTF-8 \
+              TZ=$hostTimeZone \
               PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
               /bin/bash --noprofile --norc -c 'exit 0' >/dev/null 2>&1
         }
@@ -2118,7 +2125,7 @@ EOF
         "${'$'}BIN/busybox" mount --bind $localTmpPath "${'$'}UBUNTU_PATH$localTmpPath" 2>/dev/null || true
         "${'$'}BIN/busybox" mount --bind "${'$'}HOME_DIR" "${'$'}UBUNTU_PATH${'$'}HOME_DIR" 2>/dev/null || true
         COMMAND_TO_EXEC="$(cat "${'$'}CMD_FILE" 2>/dev/null)"
-        "${'$'}BIN/busybox" chroot "${'$'}UBUNTU_PATH" /usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash TERM=xterm-256color LANG=en_US.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "COMMAND_TO_EXEC=${'$'}COMMAND_TO_EXEC" "OPERIT_UID=${'$'}OPERIT_UID" "OPERIT_GID=${'$'}OPERIT_GID" "OPERIT_GROUPS=${'$'}OPERIT_GROUPS" /bin/bash -lc 'echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; umask 0002; if [ -n "${'$'}OPERIT_GID" ]; then chown 0:"${'$'}OPERIT_GID" /root 2>/dev/null || true; chmod 2775 /root 2>/dev/null || true; fi; eval "${'$'}COMMAND_TO_EXEC"'
+        "${'$'}BIN/busybox" chroot "${'$'}UBUNTU_PATH" /usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash TERM=xterm-256color LANG=en_US.UTF-8 TZ=$hostTimeZone PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "COMMAND_TO_EXEC=${'$'}COMMAND_TO_EXEC" "OPERIT_UID=${'$'}OPERIT_UID" "OPERIT_GID=${'$'}OPERIT_GID" "OPERIT_GROUPS=${'$'}OPERIT_GROUPS" /bin/bash -lc 'echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; umask 0002; if [ -n "${'$'}OPERIT_GID" ]; then chown 0:"${'$'}OPERIT_GID" /root 2>/dev/null || true; chmod 2775 /root 2>/dev/null || true; fi; eval "${'$'}COMMAND_TO_EXEC"'
         ret=${'$'}?
         cleanup_mounts
         exit ${'$'}ret
@@ -2158,6 +2165,7 @@ $prootBindSetup
                 SHELL=/bin/bash \
                 TERM=xterm-256color \
                 LANG=en_US.UTF-8 \
+                TZ=$hostTimeZone \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                 COMMAND_TO_EXEC="${'$'}COMMAND_TO_EXEC" \
                 /bin/bash -lc 'echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; eval "${'$'}COMMAND_TO_EXEC"'
@@ -2174,6 +2182,7 @@ $prootBindSetup
                 SHELL=/bin/bash \
                 TERM=xterm-256color \
                 LANG=en_US.UTF-8 \
+                TZ=$hostTimeZone \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                 COMMAND_TO_EXEC="${'$'}COMMAND_TO_EXEC" \
                 /bin/bash -lc 'echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; eval "${'$'}COMMAND_TO_EXEC"'

@@ -47,18 +47,19 @@ class CommandExitMarkerTest {
         assertTrue(input.contains("123e4567-e89b-12d3-a456-426614174000"))
         assertTrue(input.contains("\\033]1337;%s%s:%s\\007"))
         assertFalse(input.substringBefore("printf").contains('\n'))
-        assertTrue(input.contains("eval 'dpkg --configure -a'; printf"))
+        assertTrue(input.contains("eval $'dpkg --configure -a'; printf"))
         assertFalse(input.contains("__OPERIT_COMMAND_EXIT__"))
     }
 
     @Test
-    fun commandProtocolKeepsMultilineBodyAndAppendsEnvelopeToItsLastLine() {
+    fun commandProtocolEncodesMultilineBodyOnOnePhysicalLine() {
         val input = buildCommandWithExitMarkerProtocol(
             command = "cd /tmp\nexport TEST=value\n",
             commandId = "command-id",
         )
 
-        assertTrue(input.startsWith("eval 'cd /tmp\nexport TEST=value'; printf"))
+        assertTrue(input.contains("eval $'cd /tmp\\nexport TEST=value\\n'; printf"))
+        assertEquals(1, input.count { it == '\n' })
         assertTrue(input.endsWith("\"\$?\"\n"))
     }
 
@@ -66,7 +67,21 @@ class CommandExitMarkerTest {
     fun emptyCommandStillProducesACompletableNoOpEnvelope() {
         val input = buildCommandWithExitMarkerProtocol("\r\n", "command-id")
 
-        assertTrue(input.startsWith("eval ':'; printf"))
+        assertTrue(input.contains("eval $':'; printf"))
+    }
+
+    @Test
+    fun payloadNeverExposesEditorKeysOrHistoryExpansion() {
+        val input = quoteBashCommandPayload("\t\r\n\u0003\u001b\u007f中文😀'\\!\n")
+        assertTrue(input.startsWith("$'\\t\\r\\n\\003\\033\\177"))
+        assertTrue(input.endsWith("\\'\\\\\\041\\n'"))
+        assertTrue(input.all { it.code in 0x20..0x7e })
+        assertFalse(input.contains('!'))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun nulIsRejectedInsteadOfSilentlyTruncatingTheCommand() {
+        buildCommandWithExitMarkerProtocol("echo before\u0000echo after", "command-id")
     }
 
     @Test

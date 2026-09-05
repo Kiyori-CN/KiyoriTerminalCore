@@ -345,6 +345,10 @@ class TerminalManager private constructor(
      * 向指定会话发送命令（不切换当前会话）
      */
     suspend fun sendCommandToSession(sessionId: String, command: String, commandId: String? = null): String {
+        // Bash strings cannot represent NUL. Reject before enqueueing or changing execution state,
+        // rather than truncating the payload or treating a bad argument as a broken PTY writer.
+        require('\u0000' !in command) { "Terminal commands cannot contain NUL (U+0000)" }
+        require(commandId == null || '\u0000' !in commandId) { "Terminal command ID cannot contain NUL" }
         val actualCommandId = commandId ?: UUID.randomUUID().toString()
         while (true) {
             val observedSession = sessionManager.getSession(sessionId)
@@ -2340,33 +2344,6 @@ $prootBindSetup
      * 用于管理本地SSHD服务器（反向SSH隧道场景）
      */
     fun getSSHDServerManager(): SSHDServerManager = sshdServerManager
-}
-
-/** Pure command-envelope builder kept outside TerminalManager so the PTY protocol can be tested
- * without constructing the Android singleton or touching a live terminal session. */
-internal fun buildCommandWithExitMarkerProtocol(command: String, commandId: String): String {
-    val normalized = command.replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n')
-    val commandBody = normalized.ifBlank { ":" }
-    return buildString {
-        // Evaluate one shell-quoted payload so Bash reads the whole command before executing it.
-        // This prevents an intermediate prompt between lines of a wrapped command while keeping
-        // `cd`, exports, and other state changes in the current interactive shell.
-        append("eval '")
-        append(commandBody.replace("'", "'\\''"))
-        append("'; ")
-        // Terminate the protocol line explicitly. A bare CR made the marker and the next prompt
-        // share one physical line; the Canvas parser could then miss the exit code while the
-        // terminal showed a truncated UUID. The explicit newline gives the stream parser a stable
-        // line boundary after the status envelope.
-        // Carry the exit code in an ANSI OSC payload. Unlike a printable marker line, OSC is
-        // consumed by the terminal parser and cannot leave Kiyori/legacy protocol text on screen.
-        // Keep the exit code as an explicit printf argument; a single %s silently discards $?.
-        append("printf '\\033]1337;%s%s:%s\\007' '")
-        append(CommandExitMarker.PREFIX)
-        append("' '")
-        append(commandId)
-        append("' \"\$?\"\n")
-    }
 }
 
 internal fun isTargetCommandSettled(

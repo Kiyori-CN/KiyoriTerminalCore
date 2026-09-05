@@ -37,6 +37,19 @@ Kiyori integrates this repository as the `terminal` Git submodule and pins an ex
 
 Repository branding does not rename the inherited `com.ai.assistance.operit.terminal` namespace or AIDL contracts. Those identifiers remain compatibility boundaries; see [CONTEXT.md](CONTEXT.md).
 
+Batch commands preserve TAB, Unicode, quotes, control characters and multiline payloads through the
+interactive Bash session. Input is encoded before Readline and evaluated in the existing shell, so
+directory changes, exports and background jobs persist. NUL-containing commands fail explicitly.
+If the current directory was deleted, the next batch command first changes to `$HOME`; if that fails,
+the command does not execute and reports the directory error. Raw keyboard input keeps its normal
+TAB completion and Ctrl+C behavior.
+
+`CommandEnvelopePtyTest` runs the production envelope against real Bash/Readline using Python's PTY
+support. Linux hosts need `python3` and Bash; on Windows, set `KIYORI_PTY_WSL_DISTRO` to an existing
+WSL distribution before running `:terminal:testDebugUnitTest` through the parent Gradle wrapper.
+Without that explicit Windows selection the PTY test is reported as skipped; Android/proot device
+acceptance remains separate.
+
 ## Ubuntu environment
 
 The embedded Ubuntu rootfs keeps the Ubuntu distribution identity and existing internal paths. Kiyori owns the surrounding terminal presentation and the first-run toolchain flow; the READY frame does not inject a product banner. The shipped arm64 rootfs is Ubuntu 26.04.1 Resolute, built from a signed Canonical Base input and a frozen package snapshot so the core package set is reproducible and current at the recorded snapshot. Large optional toolchains are downloaded only when selected, keeping APK size and Android memory peaks bounded.

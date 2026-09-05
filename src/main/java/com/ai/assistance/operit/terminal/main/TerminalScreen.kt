@@ -26,7 +26,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,7 +39,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.ai.assistance.operit.terminal.TerminalEnv
 import com.ai.assistance.operit.terminal.ui.SetupScreen
@@ -67,14 +69,21 @@ fun TerminalScreen(
             isFirstLaunch = preferences.getBoolean("is_first_launch", true),
         )
     }
-    // NavHost publishes its first back-stack entry after this parent has already composed.
-    // Use the synchronously resolved start route during that one frame so the Shell cannot steal
-    // an immediate system Back and leave the retained terminal panel active offscreen.
-    val currentRoute =
-        navController.currentBackStackEntryAsState().value?.destination?.route
-            ?: startDestination
+    // NavController publishes its destination asynchronously. Keep the requested route as the
+    // single UI owner so a rapid second tap cannot observe the old home route and enqueue another
+    // setup navigation while the SurfaceView is being released.
+    var requestedRoute by remember(startDestination) { mutableStateOf(startDestination) }
+
+    fun requestRoute(route: String) {
+        if (!shouldRequestTerminalRoute(requestedRoute, route)) return
+        requestedRoute = route
+        navController.navigate(route) {
+            launchSingleTop = true
+        }
+    }
 
     fun completeSetupNavigation() {
+        requestedRoute = TerminalRoutes.TERMINAL_HOME_ROUTE
         context.getSharedPreferences("terminal_prefs", Context.MODE_PRIVATE)
             .edit { putBoolean("is_first_launch", false) }
         navController.navigate(TerminalRoutes.TERMINAL_HOME_ROUTE) {
@@ -83,11 +92,12 @@ fun TerminalScreen(
     }
 
     BackHandler(enabled = systemBackEnabled) {
-        when (resolveTerminalBackAction(currentRoute)) {
+        when (resolveTerminalBackAction(requestedRoute)) {
             TerminalBackAction.RETURN_TO_TERMINAL_HOME ->
-                if (currentRoute == TerminalRoutes.SETUP_ROUTE) {
+                if (requestedRoute == TerminalRoutes.SETUP_ROUTE) {
                     completeSetupNavigation()
                 } else {
+                    requestedRoute = TerminalRoutes.TERMINAL_HOME_ROUTE
                     check(navController.popBackStack()) {
                         "Terminal settings route must have a terminal home destination"
                     }
@@ -133,18 +143,10 @@ fun TerminalScreen(
                 env = env,
                 useLocalImeHandling = useLocalImeHandling,
                 onNavigateToSetup = {
-                    if (navController.currentDestination?.route != TerminalRoutes.SETUP_ROUTE) {
-                        navController.navigate(TerminalRoutes.SETUP_ROUTE) {
-                            launchSingleTop = true
-                        }
-                    }
+                    requestRoute(TerminalRoutes.SETUP_ROUTE)
                 },
                 onNavigateToSettings = {
-                    if (navController.currentDestination?.route != TerminalRoutes.SETTINGS_ROUTE) {
-                        navController.navigate(TerminalRoutes.SETTINGS_ROUTE) {
-                            launchSingleTop = true
-                        }
-                    }
+                    requestRoute(TerminalRoutes.SETTINGS_ROUTE)
                 }
             )
         }
@@ -153,12 +155,8 @@ fun TerminalScreen(
             SetupScreen(
                 onBack = ::completeSetupNavigation,
                 onSetup = { commands ->
-                    context.getSharedPreferences("terminal_prefs", Context.MODE_PRIVATE)
-                        .edit { putBoolean("is_first_launch", false) }
                     env.onSetup(commands)
-                    navController.navigate(TerminalRoutes.TERMINAL_HOME_ROUTE) {
-                        popUpTo(TerminalRoutes.SETUP_ROUTE) { inclusive = true }
-                    }
+                    completeSetupNavigation()
                 }
             )
         }
@@ -166,6 +164,7 @@ fun TerminalScreen(
         composable(TerminalRoutes.SETTINGS_ROUTE) {
             SettingsScreen(
                 onBack = {
+                    requestedRoute = TerminalRoutes.TERMINAL_HOME_ROUTE
                     navController.popBackStack()
                 }
             )
@@ -195,6 +194,9 @@ internal fun resolveTerminalStartDestination(
     forceShowSetup || isFirstLaunch -> TerminalRoutes.SETUP_ROUTE
     else -> TerminalRoutes.TERMINAL_HOME_ROUTE
 }
+
+internal fun shouldRequestTerminalRoute(currentRoute: String, targetRoute: String): Boolean =
+    currentRoute != targetRoute
 
 private tailrec fun Context.findActivity(): Activity? =
     when (this) {

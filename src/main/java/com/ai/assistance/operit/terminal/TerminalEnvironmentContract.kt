@@ -10,7 +10,7 @@ object TerminalEnvironmentContract {
     internal const val NODE_TOOLCHAIN_READY_MARKER = "__KIYORI_NODE_TOOLCHAIN_READY__"
     internal const val NODE_LTS_VERSION = "24.20.0"
     internal const val NODE_NPM_VERSION = "11.19.0"
-    internal const val PNPM_VERSION = "11.25.0"
+    internal const val PNPM_VERSION = "12.3.4"
     internal const val TYPESCRIPT_VERSION = "7.0.2"
     internal const val GRADLE_VERSION = "9.7.1"
     internal const val GRADLE_REQUIRED_JAVA_MAJOR = 25

@@ -1301,6 +1301,10 @@ class CanvasTerminalView @JvmOverloads constructor(
      * 释放视图运行时资源，避免离开页面后持有外部对象引用。
      */
     fun release() {
+        // SurfaceView disposal can race an IME callback. Release the native editor before
+        // stopping rendering so the next route cannot inherit this terminal input connection.
+        clearFocus()
+        hideSoftKeyboard()
         stopRenderThread()
         handleArrowKeyUp()
         autoScrollRunnable?.let { handler.removeCallbacks(it) }

@@ -43,11 +43,6 @@ fun CanvasTerminalScreen(
                 setSessionScrollCallbacks(sessionId, onScrollOffsetChanged, getScrollOffset)
                 setTabBarState(tabs, currentTabId, onTabClick, onTabClose, onNewTab)
                 
-                // 全屏模式下自动请求焦点
-                post {
-                    requestFocus()
-                }
-                
             }
         },
         update = { view ->
@@ -67,6 +62,8 @@ fun CanvasTerminalScreen(
             // asynchronous on some Android compositors; clearing visibility first prevents its
             // last frame from covering the destination route during setup navigation.
             view.visibility = android.view.View.GONE
+            view.clearFocus()
+            view.hideSoftKeyboard()
             view.release()
         },
         modifier = modifier
@@ -135,6 +132,8 @@ fun PerformanceMonitoredTerminal(
         },
         onRelease = { view ->
             view.visibility = android.view.View.GONE
+            view.clearFocus()
+            view.hideSoftKeyboard()
             view.release()
         },
         modifier = modifier
@@ -194,6 +193,8 @@ fun CanvasTerminalOutput(
         },
         onRelease = { view ->
             view.visibility = android.view.View.GONE
+            view.clearFocus()
+            view.hideSoftKeyboard()
             view.release()
         },
         modifier = modifier

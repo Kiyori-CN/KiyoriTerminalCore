@@ -37,8 +37,8 @@
     <!-- Package Items -->
     <string name="package_nodejs_name">Node.js 24 LTS</string>
     <string name="package_nodejs_desc">Node.js 24.20.0 long-term support runtime</string>
-    <string name="package_pnpm_name">PNPM 11 + TypeScript 7</string>
-    <string name="package_pnpm_desc">Installs stable pnpm 11.25.0 and TypeScript 7.0.2</string>
+    <string name="package_pnpm_name">PNPM 12 + TypeScript 7</string>
+    <string name="package_pnpm_desc">Installs stable pnpm 12.3.4 and TypeScript 7.0.2</string>
     <string name="package_python_link_name">Python Link</string>
     <string name="package_python_link_desc">Link python command to python3</string>
     <string name="package_python_venv_name">Virtual Environment</string>
@@ -50,7 +50,7 @@
     <string name="package_openjdk_name">OpenJDK 25 LTS</string>
     <string name="package_openjdk_desc">Java 25 long-term support development environment</string>
     <string name="package_gradle_name">Gradle 9.7.1</string>
-    <string name="package_gradle_desc">Official Gradle stable release (pinned SHA-256, not Ubuntu\'s 4.4.1 package)</string>
+    <string name="package_gradle_desc">Official Gradle stable release</string>
     <string name="package_rust_name">Rust &amp; Cargo</string>
     <string name="package_rust_desc">Install Rust toolchain via rustup</string>
     <string name="package_go_name">Go</string>

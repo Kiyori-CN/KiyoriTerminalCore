@@ -26,8 +26,11 @@ import com.ai.assistance.operit.terminal.data.PackageManagerType
 import com.ai.assistance.operit.terminal.provider.type.HiddenExecResult
 import com.ai.assistance.operit.terminal.utils.SourceManager
 import com.ai.assistance.operit.terminal.utils.SSHConfigManager
+import android.content.Context
 import android.util.Log
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import android.view.inputmethod.InputMethodManager
 import kotlinx.coroutines.CancellationException
 
 enum class InstallStatus {
@@ -58,8 +61,18 @@ fun SetupScreen(
     onSetup: (List<String>) -> Unit
 ) {
     val context = LocalContext.current
+    val rootView = LocalView.current
     val sourceManager = remember { SourceManager(context) }
     val sshConfigManager = remember { SSHConfigManager(context) }
+
+    // Setup has no text input. Clear the previous terminal connection on entry so a delayed
+    // SurfaceView focus callback cannot reopen the IME over the environment page.
+    DisposableEffect(rootView) {
+        rootView.clearFocus()
+        (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+            ?.hideSoftInputFromWindow(rootView.windowToken, 0)
+        onDispose { }
+    }
     
     // 检查SSH是否启用
     var isSSHEnabled by remember { mutableStateOf(false) }

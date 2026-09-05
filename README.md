@@ -59,7 +59,7 @@ The environment setup uses the following audited stable versions:
 | Tool | Version and delivery |
 | --- | --- |
 | Node.js | `24.20.0` LTS arm64 archive, official SHA-256 verified; bundled npm `11.19.0` |
-| pnpm | `11.25.0`, installed into `$HOME/.local/bin` |
+| pnpm | `12.3.4`, installed into `$HOME/.local/bin` |
 | TypeScript | `7.0.2`, installed into the same npm global bin |
 | Ruby | Ubuntu `ruby` package, installed on demand and verified with `ruby --version` |
 | OpenJDK | Ubuntu Resolute `openjdk-25-jdk` (25.0.4+7-1~26.04 at the recorded snapshot) |

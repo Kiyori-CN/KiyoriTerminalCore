@@ -4,6 +4,8 @@ import com.ai.assistance.operit.terminal.main.TerminalRoutes.SETUP_ROUTE
 import com.ai.assistance.operit.terminal.main.TerminalRoutes.SETTINGS_ROUTE
 import com.ai.assistance.operit.terminal.main.TerminalRoutes.TERMINAL_HOME_ROUTE
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TerminalStartDestinationTest {
@@ -32,5 +34,12 @@ class TerminalStartDestinationTest {
             TerminalBackAction.CLOSE_TERMINAL,
             resolveTerminalBackAction(TERMINAL_HOME_ROUTE),
         )
+    }
+
+    @Test
+    fun routeRequestIsIdempotentWhileNavControllerPublishesThePreviousRoute() {
+        assertTrue(shouldRequestTerminalRoute(TERMINAL_HOME_ROUTE, SETUP_ROUTE))
+        assertFalse(shouldRequestTerminalRoute(SETUP_ROUTE, SETUP_ROUTE))
+        assertFalse(shouldRequestTerminalRoute(SETTINGS_ROUTE, SETTINGS_ROUTE))
     }
 }

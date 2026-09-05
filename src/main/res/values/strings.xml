@@ -37,8 +37,8 @@
     <!-- Package Items -->
     <string name="package_nodejs_name">Node.js 24 LTS</string>
     <string name="package_nodejs_desc">Node.js 24.20.0 长期支持版运行时</string>
-    <string name="package_pnpm_name">PNPM 11 + TypeScript 7</string>
-    <string name="package_pnpm_desc">安装稳定版 pnpm 11.25.0 和 TypeScript 7.0.2</string>
+    <string name="package_pnpm_name">PNPM 12 + TypeScript 7</string>
+    <string name="package_pnpm_desc">安装稳定版 pnpm 12.3.4 和 TypeScript 7.0.2</string>
     <string name="package_python_link_name">Python 链接</string>
     <string name="package_python_link_desc">将python命令链接到python3</string>
     <string name="package_python_venv_name">虚拟环境</string>
@@ -50,7 +50,7 @@
     <string name="package_openjdk_name">OpenJDK 25 LTS</string>
     <string name="package_openjdk_desc">Java 25 长期支持版开发环境</string>
     <string name="package_gradle_name">Gradle 9.7.1</string>
-    <string name="package_gradle_desc">Gradle 官方稳定版（固定 SHA-256，避免 Ubuntu 4.4.1 旧包）</string>
+    <string name="package_gradle_desc">Gradle 官方稳定版</string>
     <string name="package_rust_name">Rust &amp; Cargo</string>
     <string name="package_rust_desc">通过 rustup 安装 Rust 工具链</string>
     <string name="package_go_name">Go</string>

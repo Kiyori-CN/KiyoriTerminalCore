@@ -7,39 +7,14 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
 import com.ai.assistance.operit.terminal.TerminalEnv
 import com.ai.assistance.operit.terminal.ui.SetupScreen
 import com.ai.assistance.operit.terminal.ui.TerminalHome
@@ -56,51 +31,44 @@ fun TerminalScreen(
     val context = LocalContext.current
     val hostActivity = remember(context) { context.findActivity() }
     val manifestSoftInputMode = remember(hostActivity) { hostActivity?.manifestSoftInputMode() }
-    val navController = rememberNavController()
-    // Resolve the initial route before composing NavHost. An asynchronous route correction can
-    // race with the first tap on the environment button and pop the newly opened setup screen.
+    // Resolve the initial route before composing the page. The route is owned synchronously by
+    // this composable so a first tap cannot race an asynchronous navigation back stack update.
     val startDestination = remember(env.forceShowSetup) {
         // The start route belongs to this mounted TerminalScreen instance. Do not key it by
         // LocalContext: IME/configuration changes can replace the wrapper context and otherwise
-        // make NavHost re-read terminal_prefs while a user navigation is already in flight.
+        // re-read terminal_prefs while a user navigation is already in flight.
         val preferences = context.getSharedPreferences("terminal_prefs", Context.MODE_PRIVATE)
         resolveTerminalStartDestination(
             forceShowSetup = env.forceShowSetup,
             isFirstLaunch = preferences.getBoolean("is_first_launch", true),
         )
     }
-    // NavController publishes its destination asynchronously. Keep the requested route as the
-    // single UI owner so a rapid second tap cannot observe the old home route and enqueue another
-    // setup navigation while the SurfaceView is being released.
-    var requestedRoute by remember(startDestination) { mutableStateOf(startDestination) }
+    // This is the only visible-page state owner. A NavHost would keep the old SurfaceView entry
+    // alive while its asynchronous back stack catches up, allowing it to cover or steal input
+    // from setup/settings. Composing exactly one route removes that window entirely.
+    var activeRoute by remember(startDestination) { mutableStateOf(startDestination) }
 
     fun requestRoute(route: String) {
-        if (!shouldRequestTerminalRoute(requestedRoute, route)) return
-        requestedRoute = route
-        navController.navigate(route) {
-            launchSingleTop = true
-        }
+        if (shouldRequestTerminalRoute(activeRoute, route)) activeRoute = route
+    }
+
+    fun returnToTerminalHome() {
+        activeRoute = TerminalRoutes.TERMINAL_HOME_ROUTE
     }
 
     fun completeSetupNavigation() {
-        requestedRoute = TerminalRoutes.TERMINAL_HOME_ROUTE
+        returnToTerminalHome()
         context.getSharedPreferences("terminal_prefs", Context.MODE_PRIVATE)
             .edit { putBoolean("is_first_launch", false) }
-        navController.navigate(TerminalRoutes.TERMINAL_HOME_ROUTE) {
-            popUpTo(TerminalRoutes.SETUP_ROUTE) { inclusive = true }
-        }
     }
 
     BackHandler(enabled = systemBackEnabled) {
-        when (resolveTerminalBackAction(requestedRoute)) {
+        when (resolveTerminalBackAction(activeRoute)) {
             TerminalBackAction.RETURN_TO_TERMINAL_HOME ->
-                if (requestedRoute == TerminalRoutes.SETUP_ROUTE) {
+                if (activeRoute == TerminalRoutes.SETUP_ROUTE) {
                     completeSetupNavigation()
                 } else {
-                    requestedRoute = TerminalRoutes.TERMINAL_HOME_ROUTE
-                    check(navController.popBackStack()) {
-                        "Terminal settings route must have a terminal home destination"
-                    }
+                    returnToTerminalHome()
                 }
             TerminalBackAction.CLOSE_TERMINAL -> onClose()
         }
@@ -125,20 +93,8 @@ fun TerminalScreen(
         }
     }
 
-    // 使用 NavHost 处理所有导航
-    NavHost(
-        navController = navController,
-        startDestination = startDestination,
-        // TerminalHome contains a SurfaceView. AnimatedContent-style route transitions keep the
-        // old SurfaceView alive while SetupScreen is entering, which can expose the underlying AI
-        // page and send a tap to the wrong input owner on Android/OEM window compositors.
-        enterTransition = { EnterTransition.None },
-        exitTransition = { ExitTransition.None },
-        popEnterTransition = { EnterTransition.None },
-        popExitTransition = { ExitTransition.None },
-    ) {
-        
-        composable(TerminalRoutes.TERMINAL_HOME_ROUTE) {
+    when (activeRoute) {
+        TerminalRoutes.TERMINAL_HOME_ROUTE -> {
             TerminalHome(
                 env = env,
                 useLocalImeHandling = useLocalImeHandling,
@@ -150,8 +106,7 @@ fun TerminalScreen(
                 }
             )
         }
-        
-        composable(TerminalRoutes.SETUP_ROUTE) {
+        TerminalRoutes.SETUP_ROUTE -> {
             SetupScreen(
                 onBack = ::completeSetupNavigation,
                 onSetup = { commands ->
@@ -160,12 +115,10 @@ fun TerminalScreen(
                 }
             )
         }
-        
-        composable(TerminalRoutes.SETTINGS_ROUTE) {
+        TerminalRoutes.SETTINGS_ROUTE -> {
             SettingsScreen(
                 onBack = {
-                    requestedRoute = TerminalRoutes.TERMINAL_HOME_ROUTE
-                    navController.popBackStack()
+                    returnToTerminalHome()
                 }
             )
         }

@@ -37,7 +37,7 @@ class TerminalStartDestinationTest {
     }
 
     @Test
-    fun routeRequestIsIdempotentWhileNavControllerPublishesThePreviousRoute() {
+    fun routeRequestIsIdempotentWhenTheSynchronousRouteIsAlreadyActive() {
         assertTrue(shouldRequestTerminalRoute(TERMINAL_HOME_ROUTE, SETUP_ROUTE))
         assertFalse(shouldRequestTerminalRoute(SETUP_ROUTE, SETUP_ROUTE))
         assertFalse(shouldRequestTerminalRoute(SETTINGS_ROUTE, SETTINGS_ROUTE))

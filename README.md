@@ -1,78 +1,78 @@
 # KiyoriTerminalCore
 
-KiyoriTerminalCore is the Android terminal engine embedded by [Kiyori](https://github.com/Kiyori-CN/Kiyori). It is maintained as an independent, private repository and is consumed by the parent project as the `terminal` Git submodule and the `:terminal` Gradle module.
+KiyoriTerminalCore 是 [Kiyori](https://github.com/Kiyori-CN/Kiyori) 内置的 Android 终端引擎。项目以独立私有仓库维护，由父仓库通过 `terminal` Git 子模块和 `:terminal` Gradle 模块集成。
 
-The implementation originated from [AAswordman/OperitTerminalCore](https://github.com/AAswordman/OperitTerminalCore). The source attribution, upstream authorship notices, and license terms in this repository remain accurate. Repository ownership and ongoing Kiyori-specific maintenance are separate from the upstream repository.
+本项目实现源自 [AAswordman/OperitTerminalCore](https://github.com/AAswordman/OperitTerminalCore)。仓库继续准确保留上游作者归属、来源说明和许可证要求；仓库所有权及 Kiyori 专属维护工作由本项目独立负责。
 
-## What this module provides
+## 模块能力
 
-- Multiple local or SSH terminal sessions with one session state owner.
-- Persistent interactive Bash sessions backed by an Android PTY.
-- Batch command execution that preserves Unicode, TAB, quotes, control characters, multiline input, working directory, exports, and background jobs.
-- ANSI terminal parsing, incremental output history, cancellation, session recovery, and a Compose/canvas terminal surface.
-- AIDL service access for clients that need terminal work to outlive a UI process.
-- A relocatable Ubuntu 26.04.1 Resolute arm64 userspace with on-demand Node.js, pnpm, TypeScript, Ruby, Python, Rust, and Gradle setup.
-- Local and SSH-backed filesystem providers, SSH configuration, an optional local SSH server, and FTP support with a deterministic dependency sanitizer.
+- 支持多个本地或 SSH 终端会话，并由单一状态所有者统一管理。
+- 基于 Android PTY 的持久交互式 Bash 会话。
+- 批量命令执行：保留 Unicode、TAB、引号、控制字符、多行输入、工作目录、环境变量和后台任务。
+- ANSI 终端解析、增量输出历史、命令取消、会话恢复以及 Compose/Canvas 终端界面。
+- AIDL 服务访问，使终端任务可以独立于 UI 进程继续运行。
+- 可迁移的 Ubuntu 26.04.1 Resolute arm64 用户空间，并按需配置 Node.js、pnpm、TypeScript、Ruby、Python、Rust 和 Gradle。
+- 本地与 SSH 文件系统提供者、SSH 配置、可选本地 SSH 服务，以及采用确定性依赖清理流程的 FTP 支持。
 
-The module is an Android library. It does not own application updates, release distribution, product navigation, or an independent announcement channel; those responsibilities belong to Kiyori.
+本模块是 Android Library，不负责应用更新、发布分发、产品导航或独立公告渠道；这些职责属于 Kiyori 父项目。
 
-## Repository layout
+## 仓库结构
 
-| Path | Responsibility |
+| 路径 | 职责 |
 | --- | --- |
-| `src/main/java/com/ai/assistance/operit/terminal/TerminalManager.kt` | Singleton runtime owner for sessions, commands, environment installation, and recovery. |
-| `src/main/java/com/ai/assistance/operit/terminal/TerminalSession.kt` | PTY-backed session lifecycle and shell state. |
-| `src/main/java/com/ai/assistance/operit/terminal/service/TerminalService.kt` | Android service and AIDL callback bridge. |
-| `src/main/aidl/com/ai/assistance/operit/terminal/` | Stable IPC contracts and parcelable event definitions. |
-| `src/main/java/com/ai/assistance/operit/terminal/provider/` | Local/SSH command and filesystem providers, including hidden probes. |
-| `src/main/java/com/ai/assistance/operit/terminal/view/` | ANSI processing, accessibility, canvas rendering, gestures, and Compose integration. |
-| `src/main/assets/ubuntu-rootfs-manifest.json` | Checked-in digest, size, architecture, package, and source metadata for the embedded rootfs. |
-| `tools/rootfs/ubuntu-26.04.1/` | Reproducible Linux builder and archive verifier. |
-| `src/test/` | JVM contract tests and the optional real-Bash PTY test. |
+| `src/main/java/com/ai/assistance/operit/terminal/TerminalManager.kt` | 会话、命令、环境安装和恢复的单一运行时所有者。 |
+| `src/main/java/com/ai/assistance/operit/terminal/TerminalSession.kt` | PTY 会话生命周期和 Shell 状态。 |
+| `src/main/java/com/ai/assistance/operit/terminal/service/TerminalService.kt` | Android Service 及 AIDL 回调桥接。 |
+| `src/main/aidl/com/ai/assistance/operit/terminal/` | 稳定 IPC 契约和可 Parcelable 事件定义。 |
+| `src/main/java/com/ai/assistance/operit/terminal/provider/` | 本地/SSH 命令与文件系统提供者，包括隐藏探测器。 |
+| `src/main/java/com/ai/assistance/operit/terminal/view/` | ANSI 处理、无障碍、Canvas 渲染、手势和 Compose 集成。 |
+| `src/main/assets/ubuntu-rootfs-manifest.json` | 内置 rootfs 的摘要、大小、架构、软件包和来源元数据。 |
+| `tools/rootfs/ubuntu-26.04.1/` | 可复现 Linux 构建器和归档校验器。 |
+| `src/test/` | JVM 契约测试和可选的真实 Bash PTY 测试。 |
 
-## Runtime architecture
+## 运行时架构
 
-`TerminalManager` is the only owner of terminal sessions and terminal state. A client either uses it directly in the application process or binds to `TerminalService`; both paths reach the same session and event contracts. `TerminalService` forwards state and ordered events through `ITerminalService` and `ITerminalCallback` without creating a second runtime.
+`TerminalManager` 是终端会话和终端状态的唯一所有者。调用方可以在应用进程内直接使用它，也可以绑定 `TerminalService`；两条路径最终使用同一套会话和事件契约。`TerminalService` 通过 `ITerminalService` 和 `ITerminalCallback` 转发状态与有序事件，不创建第二套运行时。
 
-Each local session contains one long-lived Bash/PTY pair. Interactive keyboard input is written directly to the PTY. Batch commands are encoded as a single ASCII Bash ANSI-C quoted argument and evaluated inside that same shell, so `cd`, exports, jobs, and shell-local state survive across commands. NUL is rejected before queue or state mutation because Bash cannot represent it.
+每个本地会话包含一个长期运行的 Bash/PTY 对。交互式键盘输入直接写入 PTY。批量命令会编码为单个 ASCII Bash ANSI-C 引用参数，并在同一 Shell 中求值，因此 `cd`、环境变量、后台任务及 Shell 局部状态可以跨命令保留。由于 Bash 无法表示 NUL，包含 NUL 的命令会在进入队列或修改状态前被拒绝。
 
-Command events use one FIFO dispatcher. A command start event and all output chunks arrive before its completion event. The completion event carries the authoritative exit code and an empty body; UI history therefore keeps the incremental transcript as the only command output source. Visible envelopes use the private ANSI OSC `1337` marker `__KIYORI_COMMAND_EXIT__:<command-id>:<exit-code>`. The parser accepts the historical `__OPERIT_COMMAND_EXIT__` marker only for sessions created by older builds.
+命令事件由一个 FIFO 分发器统一排序。命令开始事件和所有输出分片一定先于完成事件到达。完成事件只携带权威退出码，正文为空；因此 UI 历史的正文唯一来源仍是增量输出事件。可见命令信封使用私有 ANSI OSC `1337` 标记 `__KIYORI_COMMAND_EXIT__:<command-id>:<exit-code>`。解析器仅为旧版本创建的会话兼容历史标记 `__OPERIT_COMMAND_EXIT__`。
 
-Cancellation targets one command ID. If Ctrl+C, a writer failure, or PTY EOF leaves the command boundary unproven, the manager replaces the PTY under the same logical session ID, increments the shell generation, and resumes queued commands only after the replacement reaches `READY`. A replacement shell necessarily resets process-local state such as the working directory and exports.
+取消操作精确指向一个命令 ID。如果 Ctrl+C、写入失败或 PTY EOF 导致命令边界无法确认，管理器会在保持逻辑会话 ID 不变的前提下重建 PTY，递增 Shell generation，并在新 Shell 到达 `READY` 后继续执行排队命令。重建 Shell 会重置工作目录和环境变量等进程级状态。
 
-## IPC contract
+## IPC 契约
 
-The following identifiers are compatibility boundaries and must not be renamed without a migration design:
+以下标识属于兼容边界。除非已有独立的迁移设计，否则不得重命名：
 
-- Namespace: `com.ai.assistance.operit.terminal`
-- Service: `com.ai.assistance.operit.terminal.service.TerminalService`
-- AIDL: `ITerminalService`, `ITerminalCallback`, `CommandExecutionEvent`, and `SessionDirectoryEvent`
-- Persisted paths, `OPERIT_*` environment names, native library filenames, hidden command markers, and Ubuntu mount paths
+- Namespace：`com.ai.assistance.operit.terminal`
+- Service：`com.ai.assistance.operit.terminal.service.TerminalService`
+- AIDL：`ITerminalService`、`ITerminalCallback`、`CommandExecutionEvent` 和 `SessionDirectoryEvent`
+- 持久化路径、`OPERIT_*` 环境变量、native 库文件名、隐藏命令标记和 Ubuntu 挂载路径
 
-The service is non-exported in the library manifest. The parent application decides how to expose the terminal UI and which process binds to the service.
+Library Manifest 中的 Service 设置为 non-exported。终端 UI 的展示方式及绑定进程由父应用决定。
 
-## Ubuntu environment
+## Ubuntu 用户空间
 
-The packaged arm64 rootfs is Ubuntu 26.04.1 Resolute. Ubuntu files such as `os-release`, package metadata, shell files, and distribution identity remain Ubuntu data; Kiyori owns the surrounding setup flow and terminal presentation. The first `READY` frame contains the shell prompt and user output only.
+随包提供的 arm64 rootfs 是 Ubuntu 26.04.1 Resolute。其 `os-release`、软件包元数据、Shell 文件和发行版身份均保持 Ubuntu 原样；Kiyori 负责外层配置流程和终端展示。首次进入 `READY` 时只输出 Shell 提示符和用户输出，不注入产品横幅。
 
-The checked-in manifest and runtime enforce these pinned capabilities:
+运行时和已提交 manifest 共同约束以下工具版本：
 
-| Capability | Contract |
+| 能力 | 契约 |
 | --- | --- |
-| Node.js | `24.20.0` arm64 archive with bundled npm `11.19.0`, verified by SHA-256 |
-| pnpm | `12.3.4`, installed below `$HOME/.local/bin` |
-| TypeScript | `7.0.2`, installed in the same npm global bin |
-| Ruby | Ubuntu `ruby` package, ready only after `command -v ruby` and `ruby --version` succeed |
-| OpenJDK | Ubuntu Resolute `openjdk-25-jdk` at the recorded snapshot |
-| Gradle | Official `9.7.1` distribution with a fixed SHA-256; it provisions OpenJDK 25 when needed |
+| Node.js | `24.20.0` arm64 归档，内置 npm `11.19.0`，通过 SHA-256 校验。 |
+| pnpm | `12.3.4`，安装至 `$HOME/.local/bin`。 |
+| TypeScript | `7.0.2`，安装至同一 npm 全局 bin 目录。 |
+| Ruby | Ubuntu `ruby` 软件包；只有 `command -v ruby` 和 `ruby --version` 均成功后才视为就绪。 |
+| OpenJDK | Ubuntu Resolute `openjdk-25-jdk`，版本以记录的 Snapshot 为准。 |
+| Gradle | 官方 `9.7.1` 分发包，固定 SHA-256；需要时同时配置 OpenJDK 25。 |
 
-The active installation marker is `.kiyori_installed_ok`. A valid `.operit_installed_ok` is accepted only once as historical migration input and is removed after the new marker is verified. New installations never write the historical marker. Hidden probes use the same rootfs and explicit tool paths as visible sessions, so readiness does not depend on an interactive profile.
+当前安装标记为 `.kiyori_installed_ok`。有效的 `.operit_installed_ok` 只允许作为一次性历史迁移输入，验证新标记后立即删除；新安装绝不会写入历史标记。隐藏探测使用同一 rootfs 和明确的工具路径，不依赖交互式 Shell 的 profile。
 
-Rootfs inputs, package locks, deterministic archive rules, and verification commands are documented in [the rootfs builder guide](tools/rootfs/ubuntu-26.04.1/README.md).
+rootfs 输入、软件包锁、确定性归档规则和校验命令见[rootfs 构建指南](tools/rootfs/ubuntu-26.04.1/README.md)。
 
-## Integrating with Kiyori
+## 集成到 Kiyori
 
-The parent repository pins an exact child commit:
+父仓库固定记录经过验证的子模块提交：
 
 ```bash
 git submodule sync -- terminal
@@ -80,11 +80,11 @@ git submodule update --init terminal
 ./gradlew :terminal:assembleDebug --no-daemon --console=plain
 ```
 
-The parent project must update the `terminal` gitlink only after a child commit has been validated and pushed. Do not copy generated `build/` or `.cxx/` output into the parent repository.
+只有在子模块提交完成验证并推送后，父仓库才可以更新 `terminal` gitlink。不得将生成的 `build/` 或 `.cxx/` 内容复制到父仓库。
 
-## Development and validation
+## 开发与验证
 
-Run commands from `D:\10_Project\Kiyori` on Windows or from the equivalent parent checkout on Linux/macOS.
+Windows 下从 `D:\10_Project\Kiyori` 执行；Linux/macOS 使用对应的父仓库路径。
 
 ```powershell
 .\gradlew.bat :terminal:testDebugUnitTest --no-daemon --console=plain
@@ -92,19 +92,19 @@ Run commands from `D:\10_Project\Kiyori` on Windows or from the equivalent paren
 git -C terminal diff --check
 ```
 
-`CommandEnvelopePtyTest` executes the production command envelope against real Bash/Readline through Python PTY support. Linux hosts need `python3` and Bash. Windows hosts must set `KIYORI_PTY_WSL_DISTRO` to an existing WSL distribution; otherwise that test reports a deliberate skip. Android/proot behavior, touch interaction, and visual layout remain device-level acceptance items.
+`CommandEnvelopePtyTest` 通过 Python PTY 支持，使用真实 Bash/Readline 执行生产命令信封。Linux 需要 `python3` 和 Bash；Windows 必须将 `KIYORI_PTY_WSL_DISTRO` 设置为有效的 WSL 发行版，否则该测试会明确报告跳过。Android/proot 行为、触摸交互和视觉布局仍需设备验收。
 
-For the parent integration gate, run the full wrapper task required by the parent repository:
+父仓库集成门禁：
 
 ```powershell
 .\gradlew.bat :app:assembleDebug --no-daemon --console=plain
 ```
 
-The expected parent artifact is `app/build/outputs/apk/debug/app-debug.apk`. A successful local build does not prove device acceptance.
+标准产物为 `app/build/outputs/apk/debug/app-debug.apk`。本地构建成功不等于设备验收通过。
 
-## Rootfs builder
+## rootfs 构建
 
-The builder must run in an isolated Linux environment as root with `curl`, `gpgv`, `qemu-aarch64-static`, `sha256sum`, `tar`, `xz`, and `python3`. It verifies Canonical's signed checksum list and the pinned Ubuntu Base digest before installation:
+构建器必须在隔离的 Linux 环境中以 root 运行，并提供 `curl`、`gpgv`、`qemu-aarch64-static`、`sha256sum`、`tar`、`xz` 和 `python3`。构建开始前会验证 Canonical 签名校验清单和固定的 Ubuntu Base 摘要：
 
 ```bash
 cd terminal/tools/rootfs/ubuntu-26.04.1
@@ -112,22 +112,22 @@ sudo ./build.sh /absolute/output/directory
 sudo ./verify.sh /absolute/output/directory
 ```
 
-The output archive and package lock are compared byte-for-byte across two builds before the Android manifest is advanced. The verifier rejects unsafe paths, symlink escapes, hard links, device/FIFO entries, build-only files, Noble references, and package-lock drift. The checked-in asset gate is run from the parent repository with `check_ubuntu_rootfs_asset.py`.
+在更新 Android manifest 前，必须比较两次独立构建的归档 SHA-256，并通过归档校验器。校验器会拒绝不安全路径、符号链接逃逸、硬链接、设备/FIFO 条目、构建专用文件、Noble 引用和软件包锁偏差。已提交资产的快速检查由父仓库的 `check_ubuntu_rootfs_asset.py` 执行。
 
-## Compatibility, provenance, and licensing
+## 兼容性、来源与许可证
 
-This repository is maintained independently for Kiyori while retaining the upstream compatibility surface. Do not replace the inherited namespace or identifiers as a branding exercise. Review `CONTEXT.md` before changing state ownership, persisted data, command markers, rootfs migration, or IPC behavior.
+本仓库为 Kiyori 独立维护，同时保留上游兼容边界。品牌调整不得替换继承的 Namespace 或运行时标识。修改状态所有权、持久化数据、命令标记、rootfs 迁移或 IPC 行为前，应先阅读 `CONTEXT.md`。
 
-The repository license and third-party notices are authoritative. Ubuntu, Node.js, package sources, JNI components, FTPServer/MINA, and other bundled inputs retain their respective notices and licenses. A private GitHub visibility setting does not remove source attribution or license obligations.
+仓库许可证和第三方声明是权威依据。Ubuntu、Node.js、软件包源、JNI 组件、FTPServer/MINA 及其他内置输入均继续遵守各自的声明和许可证。GitHub 私有可见性不会取消源码归属或许可证义务。
 
-## Troubleshooting
+## 故障排查
 
-- **The PTY test is skipped on Windows:** set `KIYORI_PTY_WSL_DISTRO` to a valid WSL distribution and rerun `:terminal:testDebugUnitTest`.
-- **A session stays in `FAILED`:** inspect the first rootfs installation error and the manifest digest before deleting application data; the manager preserves a previous active rootfs when staging or health checks fail.
-- **A tool is visible in the profile but hidden probes cannot find it:** verify the tool was installed under the documented `$HOME/.local/bin` or `$HOME/.cargo/bin`; hidden probes intentionally do not inherit an interactive `PATH`.
-- **The terminal loses context after cancellation:** this is expected only when the old PTY boundary could not be proven. The manager reports recovery and starts a fresh shell generation; queued commands remain ordered.
-- **The parent builds an unexpected child commit:** inspect `git -C terminal rev-parse HEAD` and `git ls-tree HEAD terminal` in the parent. The parent must pin the validated child commit explicitly.
+- **Windows 上 PTY 测试被跳过：** 将 `KIYORI_PTY_WSL_DISTRO` 设置为有效 WSL 发行版后，重新执行 `:terminal:testDebugUnitTest`。
+- **会话停留在 `FAILED`：** 先检查 rootfs 安装的首个错误和 manifest 摘要，再考虑清除应用数据；暂存或健康检查失败时，管理器会保留原有可用 rootfs。
+- **交互式 Shell 能找到工具，但隐藏探测找不到：** 确认工具安装在文档规定的 `$HOME/.local/bin` 或 `$HOME/.cargo/bin`；隐藏探测不会继承交互式 `PATH`。
+- **取消后终端上下文发生变化：** 只有在旧 PTY 边界无法确认时才会发生。管理器会报告恢复并启动新的 Shell generation，同时保持队列顺序。
+- **父仓库构建了错误的子模块提交：** 在父仓库执行 `git -C terminal rev-parse HEAD` 和 `git ls-tree HEAD terminal`，确认父仓库固定了经过验证的子模块提交。
 
-## Branch and delivery policy
+## 分支与交付策略
 
-Maintained changes are developed, committed, and pushed on `main`. The `upstream` remote is read-only source reference material; Kiyori changes are never pushed there. Child commits and the parent gitlink are reviewed and validated separately.
+维护性变更统一在 `main` 分支开发、提交和推送。`upstream` 仅作为只读来源参考，Kiyori 变更不得推送到该远端。子模块提交与父仓库 gitlink 必须分别审查和验证。

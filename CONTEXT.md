@@ -1,91 +1,79 @@
 # KiyoriTerminalCore shared context
 
-This file defines stable repository terminology and compatibility boundaries. Task status and transient implementation notes do not belong here.
+This file records stable terminology, ownership, compatibility contracts, and runtime invariants. It is not a task log. Detailed build procedures live in `README.md` and `tools/rootfs/ubuntu-26.04.1/README.md`.
 
 ## Repository identity
 
-- **KiyoriTerminalCore** is the Kiyori-owned terminal library repository at `https://github.com/Kiyori-CN/KiyoriTerminalCore`.
-- The repository is a fork of `https://github.com/AAswordman/OperitTerminalCore`; that repository is named **upstream**.
-- Kiyori includes this repository as the `terminal` Git submodule and Gradle module `:terminal`.
-- The maintained default branch is `main`.
+- **Repository:** `Kiyori-CN/KiyoriTerminalCore`
+- **Visibility:** private; the repository is maintained independently and is not represented as a GitHub fork.
+- **Source provenance:** the implementation originated from `AAswordman/OperitTerminalCore`; upstream authorship, attribution, and license notices remain applicable.
+- **Parent integration:** Kiyori includes this repository at `terminal/` and pins it as Gradle module `:terminal`.
+- **Maintained branch:** `main`
+- **Remote roles:** `origin` is the Kiyori repository; `upstream` is a read-only source reference.
 
-## Module contract
+Repository identity does not change the inherited Android namespace or runtime identifiers. GitHub visibility and repository lineage are metadata; they do not authorize a compatibility-breaking rename.
 
-- `TerminalManager` owns terminal sessions and exposes terminal state through Kotlin Flows. Command
-  execution events are published through one FIFO dispatcher, so a command's start and output events
-  always arrive before its completion event. Non-completion events are the sole command-body source;
-  completion events carry an empty body plus the authoritative exit code, so bounded UI history can
-  never overwrite a complete incremental transcript.
-- `TerminalService` exposes terminal operations to other processes.
-- `ITerminalService.aidl` and `ITerminalCallback.aidl` define the IPC contract.
-- The module is an Android library. Application branding, release distribution, and update ownership belong to the Kiyori parent project.
-- FTP support excludes FTPServer's transitive MINA artifact and consumes the deterministic
-  `sanitizeMinaCore` output instead. The task removes only the closed, unused
-  `BogusTrustManagerFactory*` trust-all helper family and rejects upstream input or retained-bytecode
-  reference drift before compilation.
+## Ownership and contracts
+
+- `TerminalManager` is the single owner of terminal sessions, process lifecycle, command queues, rootfs installation, environment setup, and terminal state.
+- `TerminalService` exposes that manager to other processes through AIDL. It does not create a second session registry or a second event source.
+- `ITerminalService.aidl` and `ITerminalCallback.aidl` are stable IPC contracts.
+- `SessionManager` owns session projection and persistence-facing session metadata; the PTY/session object owns the live process handles.
+- Local and SSH command providers implement the same terminal provider contract. Filesystem providers follow the active provider and share the SSH/SFTP connection when applicable.
+- The terminal UI consumes state and events. It must not duplicate command history, current-directory facts, or installation state.
 
 ## Compatibility boundary
 
-The namespace `com.ai.assistance.operit.terminal`, AIDL names, persisted paths, and externally consumed identifiers are compatibility identifiers inherited from the upstream implementation. They are not renamed by repository branding work. Changing one requires a separate compatibility and migration design.
+Do not rename these identifiers without a compatibility and migration design:
 
-KiyoriTerminalCore does not poll an independent upstream application-update channel. New versions are delivered by advancing the pinned submodule commit in `Kiyori-CN/Kiyori`.
+- `com.ai.assistance.operit.terminal`
+- AIDL names and service class names
+- Persisted paths, `OPERIT_*` variables, native library filenames, hidden command markers, and rootfs mount paths
+- Existing `operit://`/parent integration contracts consumed outside this module
 
-## User-visible environment
+The compatibility namespace is an inherited technical identifier, not a statement about current repository ownership. New explanatory text may use Kiyori branding while preserving those identifiers.
 
-- Terminal-owned explanatory text uses the Kiyori brand. The first READY frame contains no injected product banner; it is limited to the shell prompt and user output.
-- Ubuntu remains the actual distribution identity; its rootfs archive, `os-release`, `issue`, hostname, standard shell files, and package metadata are not rewritten as Kiyori.
-- Node.js setup installs the pinned Node.js `24.20.0` LTS arm64 archive (official SHA-256 verified) before `pnpm` and global TypeScript when `pnpm` is selected as a dependency. The shared readiness contract requires Node `24.20.0`, bundled npm `11.19.0`, pnpm `12.3.4`, and TypeScript `7.0.2`; it resolves `npm prefix -g` and invokes the installed tools from that exact `$HOME/.local/bin`, so visible and hidden sessions do not depend on profile-specific `PATH` state. Ruby is an optional Ubuntu `ruby` apt package and is ready only after both `command -v ruby` and `ruby --version` succeed. Java setup uses Resolute OpenJDK 25, and Gradle uses the official `9.7.1` distribution with a fixed SHA-256; selecting Gradle provisions the JDK package when its readiness probe is not confirmed.
-- Hidden command probes bootstrap the same Ubuntu rootfs before starting a persistent `/bin/bash --noprofile --norc -s` stdin shell. The `-s` mode is required because a non-interactive Bash without a script exits immediately when its stdin is a pipe; a dead hidden shell must never be reported as a successful probe.
-- Visible command envelopes emit an ANSI OSC `1337` payload containing `__KIYORI_COMMAND_EXIT__:<uuid>:<exit-code>`; the payload is consumed by the terminal parser and is not rendered as text. A session-level display filter carries incomplete OSC data across PTY read chunks so a split marker suffix cannot leak into the canvas. The exit code is the authoritative completion status and is accepted only when its command ID matches the currently executing command. The parser still accepts the historical `__OPERIT_COMMAND_EXIT__` text marker for sessions started by older builds.
-- `CommandEnvelope` encodes UTF-8 command bytes as a single ASCII Bash ANSI-C quoted argument before
-  the interactive PTY. Readline never receives payload TAB/control bytes or history-expansion tokens;
-  the existing shell decodes and evaluates the original content, including CR and trailing LF, while
-  retaining cwd, exports and jobs. NUL is rejected before queue/state mutation because Bash cannot
-  represent it. Raw `sendInput` remains keyboard input. Before batch evaluation, `builtin pwd -P`
-  checks the actual cwd; an invalid cwd triggers `builtin cd -- "$HOME"`. A failed recovery prevents
-  user-command execution and its failure status is returned through the same OSC marker.
-- Every chroot/proot `env -i` launch receives the Android host IANA timezone explicitly; the rootfs includes `tzdata`, so shell and language runtimes use device-local time even though the launcher starts with a clean environment. Static fake `/proc` fixtures remain compatibility data and do not represent a live boot time.
-- Visible command cancellation targets one exact command ID. If Ctrl+C reaches a prompt, that prompt
-  settles the cancelled command even when its trailing OSC envelope was interrupted. If cancellation,
-  a writer failure, or PTY EOF cannot prove a usable command boundary, `TerminalManager` replaces the
-  PTY under the same logical session ID and increments its shell generation. Queued commands remain in
-  FIFO order and resume only after the replacement reaches `READY`; a rebuilt shell resets cwd,
-  exported variables, and other process-local context.
-- Startup permission repair remains idempotent, but its progress text is emitted only when an Android group is actually added to the Ubuntu rootfs; reopening an already repaired terminal is silent.
-- Environment Setup sends unattended `dpkg`/`apt-get` steps with `DEBIAN_FRONTEND=noninteractive`; selected mirror IDs are validated against the current catalog and stale custom-source IDs are repaired to the built-in default before script generation.
-- Environment Setup probes all package rows through one structured hidden command. Its generated Bash script uses physical LF statement boundaries and emits exactly one framed `__KIYORI_ENV_PROBE__:<package-id>:<0|1>` record per package; a failed command, incomplete frame, or missing/duplicate/malformed package record projects as `UNKNOWN`/'Unable to detect' rather than an incorrect installed state. Python readiness is capability-based (`python` and `python3` resolve to the same target, `python3 -m venv`, and `python3 -m pip`); Debian status parsing accepts the exact `dpkg-query` value `install ok installed`. Hidden probes resolve pipx and rustup tools through `$HOME/.local/bin` and `$HOME/.cargo/bin` explicitly because their non-profile shell must not depend on interactive `PATH` state. Setup persists pipx's future-shell path and activates that bin in the current visible shell; rustup setup sources only its generated `$HOME/.cargo/env` after a successful install.
-- `TerminalScreen` keeps setup/home/settings route changes immediate (`EnterTransition.None`/`ExitTransition.None`) because `TerminalHome` contains a native `SurfaceView`; retaining the old surface during an animated route transition can expose the host screen or capture a tap while setup is entering. In non-fullscreen mode, `TerminalHome` reserves the IME inset in layout coordinates so the toolbar never visually overlaps the native surface; navigation also clears the window input connection before disposal.
-- `TerminalScreen` owns system Back in route order: setup/settings return to Terminal Home and Terminal Home asks its host to close the terminal panel. The host supplies an explicit visibility bit because the retained AI tree remains composed offscreen; a hidden terminal must not consume Software Home Back. Environment and settings toolbar entries keep stable 40dp touch targets.
-- `installed-rootfs/ubuntu`, the active `.kiyori_installed_ok` marker, the one-time historical `.operit_installed_ok` migration input, `OPERIT_*`, native filenames, hidden command markers, and chroot paths remain compatibility identifiers.
-- The checked-in Ubuntu 26.04.1 Resolute asset is described by `src/main/assets/ubuntu-rootfs-manifest.json`.
-  `TerminalManager` validates the archive size and SHA-256 into a temporary file before an atomic
-  replacement in the app files directory; a mismatched or truncated existing archive is never used.
-  The legacy Noble archive remains in the repository under `terminal/tools/rootfs/legacy` for
-  migration/forensics and is not an APK asset; new installation and upgrade decisions are driven
-  only by the Resolute manifest.
-- Installation extracts into `installed-rootfs/ubuntu.install.tmp`, validates the Resolute release,
-  architecture and command surface, migrates the old `/root` user workspace while excluding the old
-  Python venv and transient cache, and then moves the old directory to a PID-labelled backup before
-  moving the staging directory into the compatibility path. A failed move or health check preserves
-  the old directory; the backup is not silently deleted. `.kiyori_installed_ok` is the only marker
-  written for a new or migrated active rootfs. A valid `.operit_installed_ok` is accepted only once as
-  a historical migration input and is removed after the new marker is verified; it is never copied or
-  newly written. The install lock
-  is an atomic directory lock; an owner PID that is missing or changing is never treated as an
-  immediately stale lock, and extraction/staging/migration/activation failures publish a specific
-  progress message while retaining the underlying tar error output. A staging-health failure also
-  reports the individual release, directory, symlink-target, and executable-mode condition plus a
-  bounded listing of the expected paths; these diagnostics do not relax the health gate. Required
-  command paths use BusyBox `stat` to validate the archived owner execute bit because Android host
-  `[ -x]`/`access(X_OK)` is not a reliable staging-path test; successful PRoot execution remains a
-  separate device gate. Extraction runs in an isolated subprocess with `umask 022`, because Android's
-  app-process `umask 077` would otherwise turn archive `0755/0644` entries into `0700/0600`. The umask
-  fix preserves archive modes but does not, by itself, prove that the PRoot command surface starts.
-- The frozen Ubuntu Snapshot used by the build pipeline is not a runtime source. Runtime APT settings
-  write the selected mirror with the Resolute suites (`resolute`, `resolute-updates`,
-  `resolute-backports`, `resolute-security`) and do not leave a second build-only source enabled.
-- The embedded Resolute archive is deliberately hardlink-free. The build selects the GNU coreutils
-  provider, removes the unused `rust-coreutils` package that would otherwise leave a large hard-link
-  farm, and archives with `tar --hard-dereference`; the manifest and archive verifier require zero
-  tar hardlink members. This preserves dpkg-managed paths as regular files and avoids Android
-  filesystems' hardlink extraction failure without adding a second runtime extraction path.
+## Command and event invariants
+
+- One FIFO dispatcher orders command start, output chunks, directory-change events, and completion.
+- Completion carries the authoritative exit code and an empty body. Non-completion events are the only source of command output text.
+- Visible command envelopes use `__KIYORI_COMMAND_EXIT__:<command-id>:<exit-code>` inside ANSI OSC `1337`. A session-level filter carries incomplete OSC data across PTY chunks so split markers cannot leak into the canvas.
+- The parser accepts `__OPERIT_COMMAND_EXIT__` only for historical sessions.
+- Batch commands are encoded as one ASCII Bash ANSI-C quoted argument. The existing shell decodes and evaluates the original UTF-8 content, preserving cwd, exports, jobs, and multiline semantics.
+- NUL is rejected before queue/state mutation.
+- Before evaluation, `builtin pwd -P` validates the current directory. If it is gone, the shell changes to `$HOME`; a failed recovery prevents command execution and returns a failure marker.
+- Cancellation targets one exact command ID. When Ctrl+C, writer failure, or PTY EOF cannot prove a boundary, the manager replaces the PTY under the same logical session ID, increments its shell generation, and resumes queued commands only after `READY`. The replacement resets process-local cwd and exports.
+- Raw keyboard input remains direct PTY input and retains normal TAB completion and Ctrl+C behavior.
+
+## Environment and rootfs invariants
+
+- The packaged runtime is Ubuntu 26.04.1 Resolute arm64. Ubuntu distribution identity and package metadata are not rewritten as Kiyori.
+- `src/main/assets/ubuntu-rootfs-manifest.json` is authoritative for archive size, SHA-256, architecture, package lock, source Base, and snapshot metadata.
+- The active marker is `.kiyori_installed_ok`. `.operit_installed_ok` is one-time historical migration input and is removed after the new marker is verified; it is never newly written.
+- Installation validates the archive into a temporary file, extracts into `installed-rootfs/ubuntu.install.tmp`, checks release/architecture/command health, migrates the old `/root` workspace while excluding transient venv/cache content, and atomically activates the result. A failed move or health check preserves the previous active rootfs and a PID-labelled backup.
+- Installation uses an atomic directory lock. Missing or changing owner PIDs are not immediately treated as stale.
+- Required command paths are checked with BusyBox `stat`; host-side `[ -x]` is not sufficient to prove Android staging permissions. Successful PRoot/chroot execution remains a device-level condition.
+- Extraction runs with `umask 022` to preserve archive modes. This does not prove that PRoot starts on a device.
+- Runtime APT configuration uses the selected Resolute mirror suites and does not retain the build-only frozen Snapshot source.
+- The archive is hardlink-free because Android extraction filesystems may reject hard-link creation. The rootfs builder selects GNU coreutils and removes `rust-coreutils` before deterministic archiving.
+- Hidden probes use explicit `$HOME/.local/bin` and `$HOME/.cargo/bin` paths and the same rootfs as visible sessions. Readiness is projected as `UNKNOWN` when a structured probe is incomplete, duplicated, malformed, or fails.
+- Android host timezone is passed explicitly into every `env -i` launch. Static fake `/proc` fixtures are compatibility data and are not a live boot clock.
+
+## Navigation and lifecycle invariants
+
+- `TerminalScreen` owns setup/home/settings route state for the mounted screen instance.
+- Route changes are immediate because `TerminalHome` contains a native `SurfaceView`; animated retention can expose the host screen or capture input while setup is entering.
+- In non-fullscreen mode, IME insets are reserved in layout coordinates so the toolbar cannot overlap the native surface. Navigation clears the window input connection before disposal.
+- Back is handled in route order: setup/settings return to Terminal Home, and Terminal Home asks its host to close the terminal panel. The host supplies an explicit visibility bit because retained AI content may remain composed offscreen.
+- Environment and settings toolbar entries preserve stable 40dp touch targets.
+
+## Dependency and security invariants
+
+- The FTP module excludes FTPServer's transitive MINA artifact and consumes deterministic `sanitizeMinaCore` output.
+- The sanitizer removes only the unused `BogusTrustManagerFactory*` trust-all helper family and rejects source or retained-bytecode reference drift.
+- Credentials, cookies, private keys, Authorization headers, and tokens never enter logs, persisted audit text, or Git.
+- The terminal does not own an independent update channel or remote announcement mechanism.
+
+## Change checklist
+
+Before changing terminal behavior, identify the owning component and compatibility impact. Update this file when an invariant, identifier, state owner, protocol, persisted path, rootfs migration rule, or validation contract changes. Keep transient failures and task status in the parent TODO system instead.

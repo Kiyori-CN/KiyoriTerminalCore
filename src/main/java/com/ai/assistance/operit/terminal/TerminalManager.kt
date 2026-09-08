@@ -461,7 +461,8 @@ class TerminalManager private constructor(
     suspend fun executeCommandAndWait(
         sessionId: String,
         command: String,
-        timeoutMs: Long = 1_800_000L
+        timeoutMs: Long = 1_800_000L,
+        captureOutput: Boolean = true,
     ): CommandExecutionEvent? {
         val commandId = UUID.randomUUID().toString()
         val completed = CompletableDeferred<CommandExecutionEvent>()
@@ -478,7 +479,7 @@ class TerminalManager private constructor(
                             // back into the shared completion event protocol.
                             completed.complete(event.copy(outputChunk = output.toString()))
                         }
-                    } else {
+                    } else if (captureOutput) {
                         output.append(event.outputChunk)
                     }
                 }
@@ -2129,7 +2130,7 @@ EOF
         "${'$'}BIN/busybox" mount --bind $localTmpPath "${'$'}UBUNTU_PATH$localTmpPath" 2>/dev/null || true
         "${'$'}BIN/busybox" mount --bind "${'$'}HOME_DIR" "${'$'}UBUNTU_PATH${'$'}HOME_DIR" 2>/dev/null || true
         COMMAND_TO_EXEC="$(cat "${'$'}CMD_FILE" 2>/dev/null)"
-        "${'$'}BIN/busybox" chroot "${'$'}UBUNTU_PATH" /usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash TERM=xterm-256color LANG=en_US.UTF-8 TZ=$hostTimeZone PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "COMMAND_TO_EXEC=${'$'}COMMAND_TO_EXEC" "OPERIT_UID=${'$'}OPERIT_UID" "OPERIT_GID=${'$'}OPERIT_GID" "OPERIT_GROUPS=${'$'}OPERIT_GROUPS" /bin/bash -lc 'echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; umask 0002; if [ -n "${'$'}OPERIT_GID" ]; then chown 0:"${'$'}OPERIT_GID" /root 2>/dev/null || true; chmod 2775 /root 2>/dev/null || true; fi; eval "${'$'}COMMAND_TO_EXEC"'
+        "${'$'}BIN/busybox" chroot "${'$'}UBUNTU_PATH" /usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash TERM=xterm-256color LANG=en_US.UTF-8 TZ=$hostTimeZone PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "KIYORI_SSH_BOOTSTRAP=${'$'}{KIYORI_SSH_BOOTSTRAP:-0}" "COMMAND_TO_EXEC=${'$'}COMMAND_TO_EXEC" "OPERIT_UID=${'$'}OPERIT_UID" "OPERIT_GID=${'$'}OPERIT_GID" "OPERIT_GROUPS=${'$'}OPERIT_GROUPS" /bin/bash -lc 'if [ "${'$'}KIYORI_SSH_BOOTSTRAP" != 1 ]; then echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; fi; umask 0002; if [ -n "${'$'}OPERIT_GID" ]; then chown 0:"${'$'}OPERIT_GID" /root 2>/dev/null || true; chmod 2775 /root 2>/dev/null || true; fi; eval "${'$'}COMMAND_TO_EXEC"'
         ret=${'$'}?
         cleanup_mounts
         exit ${'$'}ret
@@ -2171,8 +2172,9 @@ $prootBindSetup
                 LANG=en_US.UTF-8 \
                 TZ=$hostTimeZone \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                KIYORI_SSH_BOOTSTRAP="${'$'}{KIYORI_SSH_BOOTSTRAP:-0}" \
                 COMMAND_TO_EXEC="${'$'}COMMAND_TO_EXEC" \
-                /bin/bash -lc 'echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; eval "${'$'}COMMAND_TO_EXEC"'
+                /bin/bash -lc 'if [ "${'$'}KIYORI_SSH_BOOTSTRAP" != 1 ]; then echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; fi; eval "${'$'}COMMAND_TO_EXEC"'
           else
             exec_proot_binary \
               -0 \
@@ -2188,26 +2190,21 @@ $prootBindSetup
                 LANG=en_US.UTF-8 \
                 TZ=$hostTimeZone \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                KIYORI_SSH_BOOTSTRAP="${'$'}{KIYORI_SSH_BOOTSTRAP:-0}" \
                 COMMAND_TO_EXEC="${'$'}COMMAND_TO_EXEC" \
-                /bin/bash -lc 'echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; eval "${'$'}COMMAND_TO_EXEC"'
+                /bin/bash -lc 'if [ "${'$'}KIYORI_SSH_BOOTSTRAP" != 1 ]; then echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; fi; eval "${'$'}COMMAND_TO_EXEC"'
           fi
         }
         """.trimIndent()
 
         val sshShell = """
         ssh_shell(){
-          set -x
-          if ! install_ubuntu; then
-            return 1
-          fi
+          if ! install_ubuntu; then return 1; fi
           configure_sources
           fix_permissions
-          sleep 1
           bump_progress
-          
-          # 先进入Ubuntu环境，然后连接SSH
-          # 当SSH退出时，用户会回到本地Ubuntu shell
-          login_ubuntu 'echo "Connecting to SSH..."; '"${'$'}SSH_COMMAND"'; echo "SSH connection closed. You are now in local Ubuntu terminal."; /bin/bash -il'
+          # SSH 自己输出远端就绪标记。断线直接结束会话，禁止落入本地 Shell 执行后续安装。
+          KIYORI_SSH_BOOTSTRAP=1 login_ubuntu 'exec '"${'$'}SSH_COMMAND"
         }
         """.trimIndent()
 
@@ -2326,6 +2323,9 @@ $prootBindSetup
             timeoutMs = timeoutMs
         )
     }
+
+    /** 页面展示实际运行中的 provider，而不是尚未应用的 SSH 偏好。 */
+    internal suspend fun usesSshEnvironment(): Boolean = getTerminalProvider() is SSHTerminalProvider
 
     /**
      * 获取文件系统提供者

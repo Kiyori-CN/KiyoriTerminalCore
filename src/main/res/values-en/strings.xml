@@ -14,7 +14,19 @@
     
     <!-- Dialog -->
     <string name="setup_dialog_title">Notice</string>
-    <string name="setup_dialog_message">The environment setup is about to begin, which may take some time. Please try to keep the app in foreground or floating window mode to ensure smooth configuration.\n\nIf the configuration is interrupted unexpectedly, don\'t worry. The next time you return to this page to start configuration, it will automatically continue from the previous progress.</string>
+    <string name="setup_dialog_message">Selected tools and required dependencies will be installed on the target below. Keep the app in foreground or floating window mode. Any failed step stops setup; refresh detection before configuring remaining items again.</string>
+    <string name="setup_target_local">Local Ubuntu environment</string>
+    <string name="setup_target_ssh">Remote SSH environment</string>
+    <string name="setup_target_supported">Automatic installation is available for selected tools and required dependencies.</string>
+    <string name="setup_target_unsupported">Detection is available. Automatic installation requires Linux arm64/x64, APT, and root or non-interactive sudo access.</string>
+    <string name="setup_detecting">Checking target and tool capabilities…</string>
+    <string name="setup_probe_failed">Detection did not complete. Check the terminal connection, Bash and coreutils, then refresh.</string>
+    <string name="setup_refresh">Refresh detection</string>
+    <string name="setup_progress_running">Environment setup %1$d/%2$d: running. See terminal output below.</string>
+    <string name="setup_progress_failed">Environment setup stopped at %1$d/%2$d. Check terminal errors, fix them, then refresh detection.</string>
+    <string name="setup_progress_complete">Environment setup %1$d/%2$d completed; selected tools passed verification.</string>
+    <string name="setup_needs_configuration">Needs configuration</string>
+    <string name="setup_changes_notice">Installing pnpm/TypeScript enables required installation scripts and sets the global packageImportMethod to copy so TypeScript 7 can locate its bundled libraries. Project dependencies may use more storage.</string>
     <string name="dialog_confirm">I Understand</string>
     <string name="dialog_cancel">Cancel</string>
     

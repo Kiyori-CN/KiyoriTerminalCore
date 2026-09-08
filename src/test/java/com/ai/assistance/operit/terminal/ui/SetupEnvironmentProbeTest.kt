@@ -16,11 +16,10 @@ class SetupEnvironmentProbeTest {
         assertTrue(packageCheckCommand(PackageItem("rust", "", "RUST_INSTALL_COMMAND")).contains("command -v cargo"))
         assertTrue(packageCheckCommand(PackageItem("rust", "", "RUST_INSTALL_COMMAND")).contains("cargo --version"))
         val nodeCheck = packageCheckCommand(PackageItem("nodejs", "", "node"))
-        assertTrue(nodeCheck.contains("node -v"))
-        assertTrue(nodeCheck.contains("process.version"))
-        assertTrue(nodeCheck.contains(TerminalEnvironmentContract.NODE_LTS_VERSION))
-        assertTrue(nodeCheck.contains("npm\" --version"))
-        assertTrue(nodeCheck.contains(TerminalEnvironmentContract.NODE_NPM_VERSION))
+        assertTrue(nodeCheck.contains("process.versions.node"))
+        assertTrue(nodeCheck.contains("npm --version"))
+        assertFalse(nodeCheck.contains(".local/bin/npm"))
+        assertFalse(nodeCheck.contains(TerminalEnvironmentContract.NODE_NPM_VERSION))
         assertTrue(packageCheckCommand(PackageItem("openjdk-25", "", "openjdk-25-jdk")).contains("version"))
         assertTrue(packageCheckCommand(PackageItem("gradle", "", "gradle")).contains("Gradle ${TerminalEnvironmentContract.GRADLE_VERSION}"))
         assertTrue(packageCheckCommand(PackageItem("pnpm", "", "typescript")) == TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND)
@@ -193,15 +192,13 @@ class SetupEnvironmentProbeTest {
             PackageItem("uv", "", "pipx install uv"),
         )
         val command = packageProbeCommand(packages)
-        val physicalLines = command.trimEnd('\n').lines()
+        assertTrue(command.contains("__KIYORI_ENV_PROBE_BEGIN__"))
+        assertTrue(command.contains("timeout --kill-after=1s 8s"))
+        assertTrue(command.contains("set -o pipefail"))
+        assertTrue(command.contains("__KIYORI_ENV_TARGET__"))
+        assertTrue(command.contains("__KIYORI_ENV_PROBE__:python3-pip"))
+        assertTrue(command.lines().last { it.isNotBlank() }.contains("__KIYORI_ENV_PROBE_END__"))
 
-        assertTrue(command.startsWith("printf '%s\\n' '__KIYORI_ENV_PROBE_BEGIN__'"))
-        assertEquals(packages.size + 2, physicalLines.size)
-        assertTrue(physicalLines.drop(1).dropLast(1).all { line -> line.startsWith("if (") })
-        assertTrue(command.contains("if (python3 -m pip --version"))
-        assertTrue(command.contains("if (PATH=\"${'$'}HOME/.local/bin:${'$'}PATH\""))
-        assertTrue(command.contains("__KIYORI_ENV_PROBE__:python3-pip' '1'"))
-        assertTrue(command.endsWith("printf '%s\\n' '__KIYORI_ENV_PROBE_END__'\n"))
     }
 
     @Test

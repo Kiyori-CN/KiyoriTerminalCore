@@ -1,6 +1,6 @@
 # KiyoriTerminalCore
 
-KiyoriTerminalCore 是 [Kiyori](https://github.com/Kiyori-CN/Kiyori) 内置的 Android 终端引擎。项目以独立私有仓库维护，由父仓库通过 `terminal` Git 子模块和 `:terminal` Gradle 模块集成。
+KiyoriTerminalCore 是 [Kiyori](https://github.com/Kiyori-CN/Kiyori) 内置的 Android 终端引擎。项目以独立公开仓库维护，由父仓库通过 `terminal` Git 子模块和 `:terminal` Gradle 模块集成；仓库公开不代表产品已发行。
 
 本项目实现源自 [AAswordman/OperitTerminalCore](https://github.com/AAswordman/OperitTerminalCore)。仓库继续准确保留上游作者归属、来源说明和许可证要求；仓库所有权及 Kiyori 专属维护工作由本项目独立负责。
 
@@ -40,6 +40,26 @@ KiyoriTerminalCore 是 [Kiyori](https://github.com/Kiyori-CN/Kiyori) 内置的 A
 
 取消操作精确指向一个命令 ID。如果 Ctrl+C、写入失败或 PTY EOF 导致命令边界无法确认，管理器会在保持逻辑会话 ID 不变的前提下重建 PTY，递增 Shell generation，并在新 Shell 到达 `READY` 后继续执行排队命令。重建 Shell 会重置工作目录和环境变量等进程级状态。
 
+## 环境配置与 SSH
+
+从终端右下角进入环境配置。页面显示实际 provider 的本地/SSH 身份、用户、主机、HOME 与架构，
+支持重新检测，并展示各工具解析到的路径和诊断。状态区分已就绪、缺失、需要配置和检测失败；
+单项超时不覆盖其他工具的有效结果。未完成的必需依赖检测会阻止对应安装。
+
+探测使用独立的有界执行通道；SSH 使用目标用户的登录交互 Bash 配置，以识别登录 PATH 和 NVM
+等 Shell 初始化中的工具。它不复制当前 PTY 中尚未持久化的 `export`、别名或项目虚拟环境。
+自动安装支持具有 APT 的 Linux arm64/x64，要求 root 或 `sudo -n` 可用；其他目标可查看检测结果。
+每个安装步骤绑定检测时的系统、架构、UID、HOME、主机与 machine-id 指纹，身份变化时停止。
+SSH 断线结束会话，不进入本地 Shell；终端就绪标记只由远端发出。
+
+安装仅处理选中项及依赖，不执行整机升级、不清空 npm 缓存、不重写全局包源。
+Node 官方归档在 staging 校验摘要与实际执行后激活；已有普通入口文件会被保留并明确报错。
+pnpm 安装显式启用原生包及必要脚本，使用其配置接口设置全局 `packageImportMethod=copy`，
+避免 TypeScript 7 原生编译器在 proot 硬链接下误定位内置库；确认框说明此项持久变更及空间代价。
+项目级配置仍可覆盖全局配置，排障时需检查该项目是否显式使用 hardlink。
+就绪检查包含 TypeScript 临时项目编译和 Node 执行，临时目录结束后删除。终端显示步骤进度、
+失败停止位置或全部验证完成；失败后重新检测再配置，不承诺断点自动续传。
+
 ## IPC 契约
 
 以下标识属于兼容边界。除非已有独立的迁移设计，否则不得重命名：
@@ -59,7 +79,7 @@ Library Manifest 中的 Service 设置为 non-exported。终端 UI 的展示方�
 
 | 能力 | 契约 |
 | --- | --- |
-| Node.js | `24.20.0` arm64 归档，内置 npm `11.19.0`，通过 SHA-256 校验。 |
+| Node.js | `24.20.0` arm64/x64 官方归档，内置 npm `11.19.0`，通过 SHA-256 校验；识别可执行的 Node ≥24.20 与独立升级的 npm。 |
 | pnpm | `12.3.4`，安装至 `$HOME/.local/bin`。 |
 | TypeScript | `7.0.2`，安装至同一 npm 全局 bin 目录。 |
 | Ruby | Ubuntu `ruby` 软件包；只有 `command -v ruby` 和 `ruby --version` 均成功后才视为就绪。 |

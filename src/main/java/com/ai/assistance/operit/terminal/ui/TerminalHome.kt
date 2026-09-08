@@ -320,6 +320,20 @@ fun TerminalHome(
             .fillMaxSize()
             .background(Color.Black)
     ) {
+        env.setupProgress?.let { progress ->
+            Text(
+                text = stringResource(
+                    when {
+                        progress.failed -> com.ai.assistance.operit.terminal.R.string.setup_progress_failed
+                        progress.completed -> com.ai.assistance.operit.terminal.R.string.setup_progress_complete
+                        else -> com.ai.assistance.operit.terminal.R.string.setup_progress_running
+                    }, progress.step, progress.total,
+                ),
+                color = if (progress.failed) Color(0xFFFFA500) else Color.White,
+                fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
         if (env.isFullscreen) {
             Column(
                 modifier = Modifier

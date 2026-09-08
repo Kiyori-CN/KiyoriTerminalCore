@@ -25,7 +25,6 @@ import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.data.PackageManagerType
 import com.ai.assistance.operit.terminal.provider.type.HiddenExecResult
 import com.ai.assistance.operit.terminal.utils.SourceManager
-import com.ai.assistance.operit.terminal.utils.SSHConfigManager
 import android.content.Context
 import android.util.Log
 import androidx.compose.ui.platform.LocalContext
@@ -37,6 +36,7 @@ enum class InstallStatus {
     CHECKING,
     INSTALLED,
     NOT_INSTALLED,
+    NEEDS_CONFIGURATION,
     UNKNOWN,
 }
 
@@ -58,12 +58,12 @@ data class PackageCategory(
 @Composable
 fun SetupScreen(
     onBack: () -> Unit,
-    onSetup: (List<String>) -> Unit
+    onSetup: (List<String>) -> Unit,
+    setupInProgress: Boolean = false,
 ) {
     val context = LocalContext.current
     val rootView = LocalView.current
     val sourceManager = remember { SourceManager(context) }
-    val sshConfigManager = remember { SSHConfigManager(context) }
 
     // Setup has no text input. Clear the previous terminal connection on entry so a delayed
     // SurfaceView focus callback cannot reopen the IME over the environment page.
@@ -77,9 +77,6 @@ fun SetupScreen(
     // 检查SSH是否启用
     var isSSHEnabled by remember { mutableStateOf(false) }
     
-    LaunchedEffect(Unit) {
-        isSSHEnabled = sshConfigManager.isEnabled()
-    }
     
     // 资源值必须在 Composable 作用域中解析，避免把旧 Locale 文案缓存进 remember 状态。
     val packageCategories =
@@ -238,18 +235,26 @@ fun SetupScreen(
     // 新增：跟踪包的安装状态
     val packageStatus = remember { mutableStateMapOf<String, InstallStatus>() }
     val terminalManager = remember(context) { TerminalManager.getInstance(context) }
+    var refreshGeneration by remember { mutableIntStateOf(0) }
+    var target by remember { mutableStateOf<SetupEnvironmentTarget?>(null) }
+    var probeDetails by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var probeRunning by remember { mutableStateOf(true) }
     // 包检测使用一次结构化 hidden probe，不能抢占用户当前可见 PTY 会话或把探测命令加入用户队列。
-    LaunchedEffect(terminalManager) {
+    LaunchedEffect(terminalManager, refreshGeneration) {
+        probeRunning = true
+        target = null
+        probeDetails = emptyMap()
         val allPackages = packageCategories.flatMap { it.packages }
         allPackages.forEach { pkg ->
             packageStatus[pkg.id] = InstallStatus.CHECKING
         }
 
         val result = try {
+            isSSHEnabled = terminalManager.usesSshEnvironment()
             terminalManager.executeHiddenCommand(
                 command = packageProbeCommand(allPackages),
                 executorKey = "environment-setup-check",
-                timeoutMs = 30_000L,
+                timeoutMs = 60_000L,
             )
         } catch (error: CancellationException) {
             throw error
@@ -263,6 +268,8 @@ fun SetupScreen(
             )
         }
         val statuses = packageProbeStatuses(result, allPackages)
+        target = setupEnvironmentTarget(result)
+        probeDetails = packageProbeDetails(result)
         allPackages.forEach { pkg ->
             val status = statuses[pkg.id] ?: InstallStatus.UNKNOWN
             packageStatus[pkg.id] = status
@@ -277,6 +284,7 @@ fun SetupScreen(
                         selectedPackages[pkg.id] == true
                 }
         }
+        probeRunning = false
     }
 
     var showSetupDialog by remember { mutableStateOf(false) }
@@ -287,7 +295,9 @@ fun SetupScreen(
         AlertDialog(
             onDismissRequest = { showSetupDialog = false },
             title = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.setup_dialog_title)) },
-            text = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.setup_dialog_message)) },
+            text = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.setup_dialog_message) +
+                "\n${target?.user}@${target?.host} · ${target?.home}\n" +
+                stringResource(com.ai.assistance.operit.terminal.R.string.setup_changes_notice)) },
             confirmButton = {
                 Button(
                     enabled = !setupSubmitted,
@@ -340,7 +350,7 @@ fun SetupScreen(
         )
         
         // SSH模式警告横幅
-        if (isSSHEnabled) {
+        run {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -363,19 +373,24 @@ fun SetupScreen(
                     )
                     Column {
                         Text(
-                            text = "SSH 模式警告",
+                            text = stringResource(if (isSSHEnabled) com.ai.assistance.operit.terminal.R.string.setup_target_ssh else com.ai.assistance.operit.terminal.R.string.setup_target_local),
                             color = Color(0xFFFFA500),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "本页面在 SSH 模式下检测不准确，请自行手动配置 pnpm 和 python。",
+                            text = target?.let { "${it.user}@${it.host} · ${it.system} ${it.architecture}\n${it.home}\n" +
+                                stringResource(if (it.canInstall) com.ai.assistance.operit.terminal.R.string.setup_target_supported else com.ai.assistance.operit.terminal.R.string.setup_target_unsupported) }
+                                ?: stringResource(if (probeRunning) com.ai.assistance.operit.terminal.R.string.setup_detecting else com.ai.assistance.operit.terminal.R.string.setup_probe_failed),
                             color = Color.White,
                             fontSize = 12.sp,
                             lineHeight = 16.sp
                         )
                     }
+                }
+                TextButton(onClick = { refreshGeneration++ }, enabled = !probeRunning && !setupSubmitted) {
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.setup_refresh))
                 }
             }
         }
@@ -387,7 +402,9 @@ fun SetupScreen(
         ) {
             items(packageCategories) { category ->
                 CategoryCard(
-                    category = category,
+                    category = category.copy(packages = category.packages.map { pkg ->
+                        pkg.copy(description = listOfNotNull(pkg.description, probeDetails[pkg.id]?.takeIf(String::isNotBlank)).joinToString("\n"))
+                    }),
                     isExpanded = expandedCategories[category.id] ?: false,
                     onExpandToggle = { expandedCategories[category.id] = !expandedCategories.getOrDefault(category.id, false) },
                     selectedPackages = selectedPackages,
@@ -413,18 +430,12 @@ fun SetupScreen(
             }
             
             Button(
+                enabled = !setupInProgress && !probeRunning && !setupSubmitted && target?.canInstall == true &&
+                    setupSelectionResolved(selectedPackages, packageStatus) &&
+                    selectedPackages.any { (id, selected) -> selected && packageStatus[id] != InstallStatus.INSTALLED },
                 onClick = {
+                    val installTarget = target ?: return@Button
                     val commands = mutableListOf<String>()
-
-                    // 自动配置必须保持非交互；任何一步失败都由逐步执行协议停止后续命令。
-                    commands.addAll(TerminalEnvironmentContract.SYSTEM_REPAIR_COMMANDS)
-                    
-                    // 镜像源配置必须复用设置页当前选择，且写入 Ubuntu rootfs 的 root HOME。
-                    commands.addAll(
-                        TerminalEnvironmentContract.buildPipConfigurationCommands(
-                            sourceManager.getSelectedSource(PackageManagerType.PIP).url
-                        )
-                    )
                     
                     // 收集选中的包
                     val selectedAptPackages = mutableListOf<String>()
@@ -460,7 +471,11 @@ fun SetupScreen(
                                     val rustEnvCommand = sourceManager.getRustSourceEnvCommand(rustSource)
                                     // 添加环境变量设置和安装命令
                                     selectedCustomCommands.add("$rustEnvCommand && curl -v --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y")
-                                } else if (pkg.id == "uv" || pkg.id == "nodejs" || pkg.id == "gradle") {
+                                } else if (pkg.id == "uv") {
+                                    selectedCustomCommands.add("PIP_INDEX_URL=" +
+                                        TerminalEnvironmentContract.shellQuote(sourceManager.getSelectedSource(PackageManagerType.PIP).url) +
+                                        " pipx install uv")
+                                } else if (pkg.id == "nodejs" || pkg.id == "gradle") {
                                     selectedCustomCommands.add(pkg.command)
                                 } else if (category.id == "nodejs" && pkg.id != "nodejs") {
                                     selectedNpmPackages.add(pkg.command)
@@ -490,9 +505,13 @@ fun SetupScreen(
                                 nodeJsRequiredByPnpm
                         ) {
                             allAptDeps.add("curl")
+                            allAptDeps.add("xz-utils")
+                            allAptDeps.add("ca-certificates")
                         }
                         if (shouldInstallGradle) {
                             allAptDeps.add("unzip")
+                            allAptDeps.add("curl")
+                            allAptDeps.add("ca-certificates")
                         }
                         if (shouldInstallOpenJdkForGradle) {
                             allAptDeps.add(TerminalEnvironmentContract.OPENJDK_APT_PACKAGE)
@@ -504,7 +523,8 @@ fun SetupScreen(
                     
                     // 使用 apt 安装所有 apt 包和依赖
                     if (allAptDeps.isNotEmpty()) {
-                        commands.add(TerminalEnvironmentContract.buildAptInstallCommand(allAptDeps))
+                        commands.add(installTarget.aptCommand("DEBIAN_FRONTEND=noninteractive apt-get update"))
+                        commands.add(installTarget.aptCommand(TerminalEnvironmentContract.buildAptInstallCommand(allAptDeps)))
                     }
                     
                     // 然后运行自定义命令（如安装 rust, uv, nodejs 等）
@@ -537,7 +557,13 @@ fun SetupScreen(
                         )
                     }
                     
-                    commandsToRun.value = commands
+                    // 最后用与页面相同的真实能力探针验收所有选中项，失败必须回报非零退出码。
+                    packageCategories.flatMap { it.packages }.filter { selectedPackages[it.id] == true }.forEach { pkg ->
+                        commands.add(TerminalEnvironmentContract.bashScript(
+                            "set -e; ${TerminalEnvironmentContract.TOOL_PATH_COMMAND}; ${packageCheckCommand(pkg)}"
+                        ))
+                    }
+                    commandsToRun.value = installTarget.bindCommands(commands)
                     showSetupDialog = true
                 },
                 modifier = Modifier.weight(1f),
@@ -724,6 +750,11 @@ private fun PackageItem(
                         fontSize = 12.sp,
                         modifier = Modifier.padding(start = 4.dp),
                     )
+                } else if (status == InstallStatus.NEEDS_CONFIGURATION) {
+                    Text(
+                        text = " (${stringResource(com.ai.assistance.operit.terminal.R.string.setup_needs_configuration)})",
+                        color = Color(0xFFFFA500), fontSize = 12.sp,
+                    )
                 }
             }
             if (packageItem.description.isNotEmpty()) {
@@ -747,18 +778,13 @@ internal fun packageCheckCommand(pkg: PackageItem): String = when (pkg.id) {
     "uv" ->
         "PATH=\"${TerminalEnvironmentContract.PIPX_BIN_DIR}:${'$'}PATH\" command -v uv && " +
             "PATH=\"${TerminalEnvironmentContract.PIPX_BIN_DIR}:${'$'}PATH\" uv --version"
-    "nodejs" ->
-        "PATH=\"${TerminalEnvironmentContract.USER_LOCAL_BIN_DIR}:${'$'}PATH\" " +
-            "node -v >/dev/null 2>&1 && " +
-            "PATH=\"${TerminalEnvironmentContract.USER_LOCAL_BIN_DIR}:${'$'}PATH\" " +
-            "node -e \"process.exit(process.version === 'v${TerminalEnvironmentContract.NODE_LTS_VERSION}' ? 0 : 1)\" >/dev/null 2>&1 && " +
-            "test \"${'$'}(\"${'$'}HOME/.local/bin/npm\" --version)\" = \"${TerminalEnvironmentContract.NODE_NPM_VERSION}\""
+    "nodejs" -> TerminalEnvironmentContract.NODE_RUNTIME_CHECK_COMMAND
     "pnpm" -> TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
-    "go" -> "command -v go"
+    "go" -> "command -v go && go version"
     TerminalEnvironmentContract.RUBY_PACKAGE_ID -> "command -v ruby && ruby --version"
-    "ssh" -> "command -v ssh"
-    "sshpass" -> "command -v sshpass"
-    "openssh-server" -> "command -v sshd"
+    "ssh" -> "command -v ssh && ssh -V"
+    "sshpass" -> "command -v sshpass && sshpass -V"
+    "openssh-server" -> "command -v sshd && sshd -V"
     "openjdk-25" ->
         "java -version 2>&1 | grep -E 'version \"${TerminalEnvironmentContract.GRADLE_REQUIRED_JAVA_MAJOR}([.]|\")'"
     "gradle" ->
@@ -768,7 +794,7 @@ internal fun packageCheckCommand(pkg: PackageItem): String = when (pkg.id) {
         "python --version >/dev/null 2>&1 && python3 --version >/dev/null 2>&1 && " +
             "python_path=\"${'$'}(command -v python)\" && python3_path=\"${'$'}(command -v python3)\" && " +
             "[ \"${'$'}(readlink -f \"${'$'}python_path\")\" = \"${'$'}(readlink -f \"${'$'}python3_path\")\" ]"
-    "python3-venv" -> "python3 -m venv --help >/dev/null 2>&1"
+    "python3-venv" -> "python3 -m venv --help >/dev/null 2>&1 && python3 -c 'import venv, ensurepip'"
     "python3-pip" -> "python3 -m pip --version >/dev/null 2>&1"
     else ->
         "status=${'$'}(dpkg-query -W -f='${'$'}{Status}\\n' '${pkg.command.split(" ").first()}' 2>/dev/null) && " +
@@ -800,7 +826,7 @@ private const val PACKAGE_PROBE_ENTRY_PREFIX = "__KIYORI_ENV_PROBE__:"
 private const val PACKAGE_PROBE_END_MARKER = "__KIYORI_ENV_PROBE_END__"
 private val PACKAGE_PROBE_ID_PATTERN = Regex("[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")
 private val PACKAGE_PROBE_ENTRY_PATTERN =
-    Regex("^${Regex.escape(PACKAGE_PROBE_ENTRY_PREFIX)}(${PACKAGE_PROBE_ID_PATTERN.pattern}):([01])$")
+    Regex("^${Regex.escape(PACKAGE_PROBE_ENTRY_PREFIX)}(${PACKAGE_PROBE_ID_PATTERN.pattern}):([0124])(?::([A-Za-z0-9+/=]*))?$")
 
 internal fun packageProbeCommand(packages: List<PackageItem>): String = buildString {
     require(packages.map(PackageItem::id).distinct().size == packages.size) {
@@ -810,17 +836,30 @@ internal fun packageProbeCommand(packages: List<PackageItem>): String = buildStr
         "Environment probe package IDs must use lowercase letters, digits, and hyphens"
     }
 
+    appendLine("set +e; set +u")
+    appendLine(TerminalEnvironmentContract.TOOL_PATH_COMMAND)
+    appendLine("cd \"${'$'}HOME\" || exit 1")
+    appendLine(SETUP_TARGET_COMMAND)
     appendLine("printf '%s\\n' '$PACKAGE_PROBE_BEGIN_MARKER'")
-    packages.forEach { pkg ->
-        append("if (")
-        append(packageCheckCommand(pkg))
-        append(") >/dev/null 2>&1; then printf '%s:%s\\n' '")
-        append(PACKAGE_PROBE_ENTRY_PREFIX)
-        append(pkg.id)
-        append("' '1'; else printf '%s:%s\\n' '")
-        append(PACKAGE_PROBE_ENTRY_PREFIX)
-        append(pkg.id)
-        appendLine("' '0'; fi")
+    packages.chunked(4).forEach { batch ->
+        batch.forEach { pkg ->
+            val check = """
+                ${packageDiagnosticCommand(pkg)}
+                if ! ( ${packagePresenceCommand(pkg)} ) >/dev/null 2>&1; then exit 3; fi
+                if ( ${packageCheckCommand(pkg)} ); then exit 0; else exit 4; fi
+            """.trimIndent()
+            appendLine("""
+                (
+                set -o pipefail
+                probe_output=${'$'}(timeout --kill-after=1s 8s ${TerminalEnvironmentContract.bashScript(check)} 2>&1 | head -c 2048)
+                probe_rc=${'$'}?
+                case "${'$'}probe_rc" in 0) probe_status=1 ;; 3) probe_status=0 ;; 4) probe_status=4 ;; *) probe_status=2 ;; esac
+                probe_encoded=${'$'}(printf '%s' "${'$'}probe_output" | base64 | tr -d '\n')
+                printf '%s:%s:%s\n' '$PACKAGE_PROBE_ENTRY_PREFIX${pkg.id}' "${'$'}probe_status" "${'$'}probe_encoded"
+                ) &
+            """.trimIndent())
+        }
+        appendLine("wait")
     }
     // These must be physical LF separators. A literal backslash-n is folded into the neighboring
     // shell token and makes the complete script fail before either protocol marker can be emitted.
@@ -831,7 +870,7 @@ internal fun packageProbeStatuses(
     result: HiddenExecResult,
     packages: List<PackageItem>,
 ): Map<String, InstallStatus> {
-    if (!result.isOk || result.exitCode != 0) {
+    if (!result.isOk || result.exitCode != 0 || result.outputTruncated) {
         return packages.associate { pkg -> pkg.id to InstallStatus.UNKNOWN }
     }
 
@@ -846,14 +885,17 @@ internal fun packageProbeStatuses(
         lines
             .subList(beginIndexes.single() + 1, endIndexes.single())
             .mapNotNull { line ->
+                if (line.startsWith(PACKAGE_PROBE_ENTRY_PREFIX) && PACKAGE_PROBE_ENTRY_PATTERN.matchEntire(line) == null) {
+                    return@mapNotNull line.removePrefix(PACKAGE_PROBE_ENTRY_PREFIX).substringBefore(':') to InstallStatus.UNKNOWN
+                }
                 PACKAGE_PROBE_ENTRY_PATTERN.matchEntire(line)?.let { match ->
                     val id = match.groupValues[1]
-                    val status =
-                        if (match.groupValues[2] == "1") {
-                            InstallStatus.INSTALLED
-                        } else {
-                            InstallStatus.NOT_INSTALLED
-                        }
+                    val status = when (match.groupValues[2]) {
+                        "1" -> InstallStatus.INSTALLED
+                        "0" -> InstallStatus.NOT_INSTALLED
+                        "4" -> InstallStatus.NEEDS_CONFIGURATION
+                        else -> InstallStatus.UNKNOWN
+                    }
                     id to status
                 }
             }
@@ -873,7 +915,15 @@ internal fun nodeJsRequiredByPnpm(
     selectedPackages: Map<String, Boolean>,
     packageStatus: Map<String, InstallStatus>,
 ): Boolean =
-    selectedPackages["pnpm"] == true && packageStatus["nodejs"] != InstallStatus.INSTALLED
+    selectedPackages["pnpm"] == true && packageStatus["pnpm"] != InstallStatus.INSTALLED &&
+        packageStatus["nodejs"] != InstallStatus.INSTALLED
+
+internal fun setupSelectionResolved(selected: Map<String, Boolean>, statuses: Map<String, InstallStatus>): Boolean {
+    val required = selected.filterValues { it }.keys.toMutableSet()
+    if ("pnpm" in required && statuses["pnpm"] != InstallStatus.INSTALLED) required.add("nodejs")
+    if ("gradle" in required && statuses["gradle"] != InstallStatus.INSTALLED) required.add("openjdk-25")
+    return required.all { statuses[it] in setOf(InstallStatus.INSTALLED, InstallStatus.NOT_INSTALLED, InstallStatus.NEEDS_CONFIGURATION) }
+}
 
 internal fun openJdkRequiredByGradle(
     selectedPackages: Map<String, Boolean>,

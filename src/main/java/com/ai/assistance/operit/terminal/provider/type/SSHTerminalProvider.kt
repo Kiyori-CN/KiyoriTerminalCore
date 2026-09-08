@@ -5,6 +5,7 @@ import android.util.Log
 import com.ai.assistance.operit.terminal.Pty
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.TerminalSession
+import com.ai.assistance.operit.terminal.TerminalEnvironmentContract
 import com.ai.assistance.operit.terminal.data.SSHAuthType
 import com.ai.assistance.operit.terminal.data.SSHConfig
 import com.ai.assistance.operit.terminal.provider.filesystem.FileSystemProvider
@@ -171,7 +172,9 @@ class SSHTerminalProvider(
             )
 
         return sshFileManager.executeCommand(
-            command = command,
+            // exec channel 默认不读取登录配置；用目标用户的登录 Bash 获取 HOME/PATH，
+            // 然后执行与本地相同的探针。连接失败仍保持 SSH 失败，不调用本地 provider。
+            command = "bash -lic ${TerminalEnvironmentContract.shellQuote(command)}",
             timeoutMs = timeoutMs,
             connectionId = id
         ).getOrElse { error ->
@@ -214,7 +217,7 @@ class SSHTerminalProvider(
         }
         
         cmd.append("ssh")
-        cmd.append(" -p ${sshConfig.port}")
+        cmd.append(" -tt -o ConnectTimeout=15 -o ConnectionAttempts=1 -p ${sshConfig.port}")
         
         // 注意：反向隧道现在通过JSch Session API配置（setupReverseTunnel），不再需要ssh命令参数
         
@@ -222,7 +225,7 @@ class SSHTerminalProvider(
             // 注意：这里的路径是Android文件系统中的路径。
             // proot已将/storage/emulated/0挂载为/sdcard，因此如果密钥在外部存储中，路径需要相应调整。
             // 为简单起见，我们假设用户提供的路径在proot环境中是可访问的。
-            cmd.append(" -i \"${sshConfig.privateKeyPath}\"")
+            cmd.append(" -i ${TerminalEnvironmentContract.shellQuote(sshConfig.privateKeyPath)}")
         }
         
         cmd.append(" -o StrictHostKeyChecking=accept-new")
@@ -233,7 +236,11 @@ class SSHTerminalProvider(
             cmd.append(" -o ServerAliveCountMax=3")
         }
         
-        cmd.append(" ${sshConfig.username}@${sshConfig.host}")
+        cmd.append(" -- ${TerminalEnvironmentContract.shellQuote("${sshConfig.username}@${sshConfig.host}")}")
+        val remoteShell = "bash -lc " + TerminalEnvironmentContract.shellQuote(
+            "printf '%s\\n' LOGIN_SUCCESSFUL TERMINAL_READY; exec bash -il"
+        )
+        cmd.append(" ${TerminalEnvironmentContract.shellQuote(remoteShell)}")
 
         return cmd.toString()
     }

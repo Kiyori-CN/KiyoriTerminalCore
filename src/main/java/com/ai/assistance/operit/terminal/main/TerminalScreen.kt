@@ -109,6 +109,7 @@ fun TerminalScreen(
         TerminalRoutes.SETUP_ROUTE -> {
             SetupScreen(
                 onBack = ::completeSetupNavigation,
+                setupInProgress = env.setupProgress?.let { !it.completed && !it.failed } == true,
                 onSetup = { commands ->
                     env.onSetup(commands)
                     completeSetupNavigation()

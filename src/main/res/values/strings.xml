@@ -14,7 +14,19 @@
     
     <!-- Dialog -->
     <string name="setup_dialog_title">温馨提示</string>
-    <string name="setup_dialog_message">即将开始环境配置，这可能需要一些时间。请尽量保持应用在前台或小窗运行以确保配置顺利进行。\n\n如果配置意外中断，不必担心。下次回到本页面再次开始配置时，会自动从上次的进度继续。</string>
+    <string name="setup_dialog_message">将在下方目标环境安装选中工具及必要依赖。请保持应用在前台或小窗运行。任何步骤失败都会停止；重新进入本页检测后，可以再次配置未就绪项目。</string>
+    <string name="setup_target_local">本地 Ubuntu 环境</string>
+    <string name="setup_target_ssh">SSH 远程环境</string>
+    <string name="setup_target_supported">支持自动安装；仅修改选中工具及必要依赖。</string>
+    <string name="setup_target_unsupported">当前环境可检测。自动安装需要 Linux arm64/x64、APT，以及 root 或免交互 sudo 权限。</string>
+    <string name="setup_detecting">正在检测目标与工具能力…</string>
+    <string name="setup_probe_failed">检测未完成。请确认终端连接、Bash 与 coreutils 可用后重新检测。</string>
+    <string name="setup_refresh">重新检测</string>
+    <string name="setup_progress_running">环境配置 %1$d/%2$d：正在执行，请查看下方终端。</string>
+    <string name="setup_progress_failed">环境配置在 %1$d/%2$d 停止。请查看终端错误，修复后重新检测。</string>
+    <string name="setup_progress_complete">环境配置 %1$d/%2$d 已完成，所选工具验证通过。</string>
+    <string name="setup_needs_configuration">需要配置</string>
+    <string name="setup_changes_notice">安装 pnpm/TypeScript 时会启用必要安装脚本，并将全局 packageImportMethod 设为 copy，以确保 TypeScript 7 正确定位内置库；项目依赖可能占用更多空间。</string>
     <string name="dialog_confirm">我明白了</string>
     <string name="dialog_cancel">取消</string>
     

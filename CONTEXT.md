@@ -5,7 +5,7 @@
 ## 仓库身份
 
 - **仓库：** `Kiyori-CN/KiyoriTerminalCore`
-- **可见性：** private；仓库独立维护，不作为 GitHub fork 表示。
+- **可见性：** public；仓库独立维护，不作为 GitHub fork 表示，仓库公开不代表产品已发行。
 - **来源：** 实现源自 `AAswordman/OperitTerminalCore`；上游作者归属、来源说明和许可证要求继续适用。
 - **父仓库集成：** Kiyori 将本仓库挂载为 `terminal/`，并作为 Gradle 模块 `:terminal` 固定提交。
 - **维护分支：** `main`
@@ -20,6 +20,9 @@
 - `ITerminalService.aidl` 和 `ITerminalCallback.aidl` 属于稳定 IPC 契约。
 - `SessionManager` 负责会话投影和面向持久化的会话元数据；PTY/session 对象负责实时进程句柄。
 - 本地和 SSH 命令提供者实现同一终端提供者契约；文件系统提供者遵循当前提供者，并在适用时共享 SSH/SFTP 连接。
+- 环境检测投影绑定实际 provider；SSH 读取目标用户登录交互 Bash 配置，本地显式解析用户工具目录。检测不复制 PTY 临时 export/虚拟环境；每项有界执行并区分缺失、需配置与未知。
+- 安装的每一步重新验证目标系统/架构/UID/HOME/主机/machine-id 指纹；SSH 只接受远端就绪标记，断线不能落入本地 Shell。自动安装仅适用于支持的 Linux APT 主机及 root/免交互 sudo。
+- Node 安装版本和运行可用性分别定义；npm 独立升级不触发 Node 重装。pnpm 原生入口、全局 copy 导入方式和 TypeScript 实际编译/运行共同定义工具链就绪；仅版本输出不够。
 - 终端 UI 只能消费状态和事件，不得复制命令历史、当前目录或安装状态等事实。
 
 ## 兼容性边界

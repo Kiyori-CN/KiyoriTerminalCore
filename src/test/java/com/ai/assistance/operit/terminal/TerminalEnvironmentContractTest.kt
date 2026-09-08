@@ -13,7 +13,7 @@ class TerminalEnvironmentContractTest {
     fun unattendedSystemRepairCannotOpenDebconfPrompts() {
         val commands = TerminalEnvironmentContract.SYSTEM_REPAIR_COMMANDS
 
-        assertEquals(4, commands.size)
+        assertEquals(3, commands.size)
         assertTrue(commands.all { it.startsWith("DEBIAN_FRONTEND=noninteractive ") })
         assertTrue(commands[0].contains("dpkg --configure -a"))
         assertTrue(commands.drop(1).all { it.contains("apt-get ") })
@@ -31,9 +31,9 @@ class TerminalEnvironmentContractTest {
             "DEBIAN_FRONTEND=noninteractive apt-get install -y 'python3-venv' 'package'\\''quoted'",
             aptCommand,
         )
-        assertTrue(nodeCommand.contains("node-v${TerminalEnvironmentContract.NODE_LTS_VERSION}-linux-arm64.tar.xz"))
+        assertTrue(nodeCommand.contains("https://nodejs.org/dist/v${TerminalEnvironmentContract.NODE_LTS_VERSION}/"))
         assertTrue(nodeCommand.contains(TerminalEnvironmentContract.NODE_LTS_SHA256))
-        assertTrue(nodeCommand.contains("test \"${'$'}(uname -m)\" = \"aarch64\""))
+        assertTrue(nodeCommand.contains(TerminalEnvironmentContract.NODE_X64_SHA256))
         assertFalse(nodeCommand.contains("deb.nodesource.com"))
     }
 
@@ -54,15 +54,15 @@ class TerminalEnvironmentContractTest {
             registryUrl = "https://registry.example.test/"
         )
 
-        assertEquals(4, commands.size)
-        assertEquals("npm config set registry 'https://registry.example.test/'", commands[0])
-        assertTrue(commands[1].contains("npm config set prefix"))
-        assertEquals(
-            "NPM_CONFIG_PREFIX=\"\$HOME/.local\" npm install -g 'pnpm@${TerminalEnvironmentContract.PNPM_VERSION}' 'typescript@${TerminalEnvironmentContract.TYPESCRIPT_VERSION}'",
-            commands[3],
-        )
-        assertTrue(commands.none { command -> command.startsWith("pnpm add -g") })
-        assertTrue(commands.none { command -> command.contains(".bashrc") })
+        assertEquals(1, commands.size)
+        val script = commands.single()
+        assertTrue(script.contains("--ignore-scripts=false --include=optional"))
+        assertTrue(script.contains("pnpm/install.js"))
+        assertTrue(script.contains("packageImportMethod copy"))
+        assertTrue(script.contains("https://registry.example.test/"))
+        assertFalse(script.contains("npm cache clean"))
+        assertFalse(script.contains("npm config set registry"))
+
     }
 
     @Test
@@ -95,15 +95,11 @@ class TerminalEnvironmentContractTest {
     fun nodeToolchainRequiresAnExactCompletionMarker() {
         val commandEcho = TerminalEnvironmentContract.NODE_TOOLCHAIN_CHECK_COMMAND
 
-        assertTrue(commandEcho.contains("node -p 'process.version'"))
-        assertTrue(commandEcho.contains("= \"v${TerminalEnvironmentContract.NODE_LTS_VERSION}\""))
-        assertTrue(commandEcho.contains("\$HOME/.local/bin"))
-        assertTrue(commandEcho.contains("global_bin=\"\$(NPM_CONFIG_PREFIX=\"\$HOME/.local\""))
-        assertTrue(commandEcho.contains("npm --version)\" = \"${TerminalEnvironmentContract.NODE_NPM_VERSION}"))
-        assertTrue(commandEcho.contains("\"\$global_bin/pnpm\" --version)\" = \"${TerminalEnvironmentContract.PNPM_VERSION}"))
-        assertTrue(commandEcho.contains("\"\$global_bin/tsc\" --version)\" = \"Version ${TerminalEnvironmentContract.TYPESCRIPT_VERSION}"))
-        assertFalse(commandEcho.contains("&& pnpm --version"))
-        assertFalse(commandEcho.contains("&& tsc --version"))
+        assertTrue(commandEcho.contains("process.versions.node"))
+        assertTrue(commandEcho.contains(".local/bin"))
+        assertTrue(commandEcho.contains("--rootDir . --outDir dist"))
+        assertFalse(commandEcho.contains("npm prefix -g"))
+        assertFalse(commandEcho.contains("11.19.0"))
         assertFalse(TerminalEnvironmentContract.isNodeToolchainReady(commandEcho))
         assertTrue(
             TerminalEnvironmentContract.isNodeToolchainReady(

@@ -11,6 +11,8 @@ import androidx.compose.runtime.setValue
 import com.ai.assistance.operit.terminal.data.TerminalSessionData
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.first
 import android.util.Log
@@ -23,6 +25,7 @@ class TerminalEnv(
     currentDirectoryState: State<String>,
     isFullscreenState: State<Boolean>,
     terminalEmulatorState: State<AnsiTerminalEmulator>,
+    initialSessionState: State<com.ai.assistance.operit.terminal.data.SessionInitState>,
     private val terminalManager: TerminalManager,
     val forceShowSetup: Boolean = false
 ) {
@@ -31,29 +34,44 @@ class TerminalEnv(
     val currentDirectory by currentDirectoryState
     val isFullscreen by isFullscreenState
     val terminalEmulator by terminalEmulatorState
+    val initialSessionState by initialSessionState
+    fun retryInitialSession() = terminalManager.retryInitialSession()
 
     var command by mutableStateOf("")
+    var actionFailed by mutableStateOf(false)
+        private set
+    var isCreatingSession by mutableStateOf(false)
+        private set
+    private var commandSubmissionPending = false
+    private var commandRevision = 0L
+    private val orderedInput = OrderedTerminalInput(terminalManager.coroutineScope)
+    fun dismissActionError() { actionFailed = false }
     private var setupExecutionJob: Job? = null
     var setupProgress by mutableStateOf<EnvironmentSetupProgress?>(null)
         private set
 
     fun onCommandChange(newCommand: String) {
+        commandRevision++
         command = newCommand
     }
 
     fun onSendInput(inputText: String, isCommand: Boolean) {
-        // 允许空输入（用于交互式场景发送回车）
-        if (isCommand) {
-            // 命令模式：也允许空命令（用于 SSH 等交互场景）
-            terminalManager.coroutineScope.launch {
-                terminalManager.sendCommand(inputText)
+        val targetId = currentSessionId ?: run { actionFailed = true; return }
+        if (isCommand && commandSubmissionPending) return
+        if (isCommand) commandSubmissionPending = true
+        actionFailed = false
+        val submittedRevision = commandRevision
+        // 固定点击时的会话；挂起后切标签不能把命令发送到新的当前会话。
+        orderedInput.submit {
+            withContext(Dispatchers.Main.immediate) {
+                try {
+                    if (isCommand) terminalManager.sendUserCommand(targetId, inputText)
+                    else terminalManager.sendInputToSession(targetId, inputText)
+                    if (isCommand && submittedRevision == commandRevision && inputText == command) onCommandChange("")
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { actionFailed = true }
+                finally { if (isCommand) commandSubmissionPending = false }
             }
-            if (inputText == command) {
-                command = ""
-            }
-        } else {
-            // 输入模式：允许空输入（例如 ssh-keygen 直接回车使用默认路径）
-            terminalManager.sendInput(inputText)
         }
     }
 
@@ -123,14 +141,19 @@ class TerminalEnv(
 
     fun onInterrupt() = terminalManager.sendInterruptSignal()
     fun onNewSession() {
+        if (isCreatingSession || initialSessionState == com.ai.assistance.operit.terminal.data.SessionInitState.INITIALIZING) return
+        isCreatingSession = true
+        actionFailed = false
         // 在terminalManager的协程作用域中异步创建会话
         terminalManager.coroutineScope.launch {
             try {
                 terminalManager.createNewSession()
                 Log.d("TerminalEnv", "New session created successfully")
             } catch (e: Exception) {
+                actionFailed = true
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e("TerminalEnv", "Failed to create new session", e)
-            }
+            } finally { isCreatingSession = false }
         }
     }
     fun onSwitchSession(sessionId: String) = terminalManager.switchToSession(sessionId)
@@ -148,6 +171,7 @@ fun rememberTerminalEnv(terminalManager: TerminalManager, forceShowSetup: Boolea
     val isFullscreenState = terminalManager.isFullscreen.collectAsState(initial = false)
     val placeholderEmulator = remember { AnsiTerminalEmulator(screenWidth = 1, screenHeight = 1, historySize = 0) }
     val terminalEmulatorState = terminalManager.terminalEmulator.collectAsState(initial = placeholderEmulator)
+    val initialSessionState = terminalManager.initialSessionState.collectAsState()
 
     return remember(terminalManager, forceShowSetup) {
         TerminalEnv(
@@ -156,6 +180,7 @@ fun rememberTerminalEnv(terminalManager: TerminalManager, forceShowSetup: Boolea
             currentDirectoryState = currentDirectoryState,
             isFullscreenState = isFullscreenState,
             terminalEmulatorState = terminalEmulatorState,
+            initialSessionState = initialSessionState,
             terminalManager = terminalManager,
             forceShowSetup = forceShowSetup
         )

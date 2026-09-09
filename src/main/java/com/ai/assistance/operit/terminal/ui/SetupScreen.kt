@@ -13,8 +13,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -229,9 +229,6 @@ fun SetupScreen(
     // 跟踪选中的包
     val selectedPackages = remember { mutableStateMapOf<String, Boolean>() }
     
-    // 跟踪每个分类的全选状态
-    val categorySelectAll = remember { mutableStateMapOf<String, Boolean>() }
-    
     // 新增：跟踪包的安装状态
     val packageStatus = remember { mutableStateMapOf<String, InstallStatus>() }
     val terminalManager = remember(context) { TerminalManager.getInstance(context) }
@@ -277,13 +274,6 @@ fun SetupScreen(
                 selectedPackages[pkg.id] = true
             }
         }
-        packageCategories.forEach { category ->
-            categorySelectAll[category.id] =
-                category.packages.all { pkg ->
-                    packageStatus[pkg.id] == InstallStatus.INSTALLED ||
-                        selectedPackages[pkg.id] == true
-                }
-        }
         probeRunning = false
     }
 
@@ -308,35 +298,35 @@ fun SetupScreen(
                             onSetup(commandsToRun.value)
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006400))
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.dialog_confirm), color = Color.White)
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.dialog_confirm), color = MaterialTheme.colorScheme.onPrimary)
                 }
             },
             dismissButton = {
                 Button(
                     onClick = { showSetupDialog = false },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A4A4A))
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
                 ) {
-                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.dialog_cancel), color = Color.White)
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.dialog_cancel), color = MaterialTheme.colorScheme.onSecondaryContainer)
                 }
             },
-            containerColor = Color(0xFF2D2D2D),
-            titleContentColor = Color.White,
-            textContentColor = Color.Gray
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF1A1A1A))
+            .background(MaterialTheme.colorScheme.background)
             .padding(16.dp)
     ) {
         // 标题
         Text(
             text = stringResource(com.ai.assistance.operit.terminal.R.string.setup_title),
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onSurface,
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(bottom = 8.dp)
@@ -344,7 +334,7 @@ fun SetupScreen(
         
         Text(
             text = stringResource(com.ai.assistance.operit.terminal.R.string.setup_subtitle),
-            color = Color.Gray,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 14.sp,
             modifier = Modifier.padding(bottom = 16.dp)
         )
@@ -356,7 +346,7 @@ fun SetupScreen(
                     .fillMaxWidth()
                     .padding(bottom = 16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFFFFA500).copy(alpha = 0.2f)
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
                 ),
                 shape = RoundedCornerShape(8.dp)
             ) {
@@ -374,7 +364,7 @@ fun SetupScreen(
                     Column {
                         Text(
                             text = stringResource(if (isSSHEnabled) com.ai.assistance.operit.terminal.R.string.setup_target_ssh else com.ai.assistance.operit.terminal.R.string.setup_target_local),
-                            color = Color(0xFFFFA500),
+                            color = MaterialTheme.colorScheme.tertiary,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -383,7 +373,7 @@ fun SetupScreen(
                             text = target?.let { "${it.user}@${it.host} · ${it.system} ${it.architecture}\n${it.home}\n" +
                                 stringResource(if (it.canInstall) com.ai.assistance.operit.terminal.R.string.setup_target_supported else com.ai.assistance.operit.terminal.R.string.setup_target_unsupported) }
                                 ?: stringResource(if (probeRunning) com.ai.assistance.operit.terminal.R.string.setup_detecting else com.ai.assistance.operit.terminal.R.string.setup_probe_failed),
-                            color = Color.White,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontSize = 12.sp,
                             lineHeight = 16.sp
                         )
@@ -408,7 +398,7 @@ fun SetupScreen(
                     isExpanded = expandedCategories[category.id] ?: false,
                     onExpandToggle = { expandedCategories[category.id] = !expandedCategories.getOrDefault(category.id, false) },
                     selectedPackages = selectedPackages,
-                    categorySelectAll = categorySelectAll,
+                    selectionEnabled = !probeRunning && !setupSubmitted && !setupInProgress,
                     packageStatus = packageStatus
                 )
             }
@@ -424,9 +414,9 @@ fun SetupScreen(
             Button(
                 onClick = onBack,
                 modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A4A4A))
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
             ) {
-                Text(stringResource(com.ai.assistance.operit.terminal.R.string.skip), color = Color.White)
+                Text(stringResource(com.ai.assistance.operit.terminal.R.string.skip), color = MaterialTheme.colorScheme.onSecondaryContainer)
             }
             
             Button(
@@ -567,9 +557,9 @@ fun SetupScreen(
                     showSetupDialog = true
                 },
                 modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006400))
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
-                Text(stringResource(com.ai.assistance.operit.terminal.R.string.start_setup), color = Color.White)
+                Text(stringResource(com.ai.assistance.operit.terminal.R.string.start_setup), color = MaterialTheme.colorScheme.onPrimary)
             }
         }
     }
@@ -581,14 +571,23 @@ private fun CategoryCard(
     isExpanded: Boolean,
     onExpandToggle: () -> Unit,
     selectedPackages: MutableMap<String, Boolean>,
-    categorySelectAll: MutableMap<String, Boolean>,
+    selectionEnabled: Boolean,
     packageStatus: Map<String, InstallStatus>
 ) {
-    val context = LocalContext.current
+    // 全选是当前包选择的投影，不再维护会与单项选择/检测结果漂移的第二份状态。
+    val selectablePackages = category.packages.filter {
+        packageStatus[it.id] == InstallStatus.NOT_INSTALLED || packageStatus[it.id] == InstallStatus.NEEDS_CONFIGURATION
+    }
+    val selectedCount = selectablePackages.count { selectedPackages[it.id] == true }
+    val selectionState = when {
+        selectedCount == 0 -> ToggleableState.Off
+        selectedCount == selectablePackages.size -> ToggleableState.On
+        else -> ToggleableState.Indeterminate
+    }
     
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF2D2D2D)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         shape = RoundedCornerShape(8.dp)
     ) {
         Column(
@@ -605,7 +604,7 @@ private fun CategoryCard(
                     // 标题 - 第一行
                     Text(
                         text = category.name,
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -613,8 +612,8 @@ private fun CategoryCard(
                     if (category.id == "nodejs" || category.id == "python") {
                         Text(
                             text = "(${stringResource(com.ai.assistance.operit.terminal.R.string.kiyori_required)})",
-                            color = Color(0xFFFFA500), // Orange color
-                            fontSize = 8.sp,
+                            color = MaterialTheme.colorScheme.tertiary, // Orange color
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(top = 2.dp)
                         )
@@ -622,7 +621,7 @@ private fun CategoryCard(
                     // 描述 - 第三行
                     Text(
                         text = category.description,
-                        color = Color.Gray,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(top = 2.dp)
                     )
@@ -633,24 +632,21 @@ private fun CategoryCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(end = 8.dp)
                 ) {
-                    Checkbox(
-                        checked = categorySelectAll[category.id] ?: false,
-                        onCheckedChange = { selectAll ->
-                            categorySelectAll[category.id] = selectAll
-                            category.packages.forEach { pkg ->
-                                if (packageStatus[pkg.id] != InstallStatus.INSTALLED) {
-                                    selectedPackages[pkg.id] = selectAll
-                                }
-                            }
+                    TriStateCheckbox(
+                        state = selectionState,
+                        enabled = selectionEnabled && selectablePackages.isNotEmpty(),
+                        onClick = {
+                            val selectAll = selectionState != ToggleableState.On
+                            selectablePackages.forEach { pkg -> selectedPackages[pkg.id] = selectAll }
                         },
                         colors = CheckboxDefaults.colors(
-                            checkedColor = Color(0xFF006400),
-                            uncheckedColor = Color.Gray
+                            checkedColor = MaterialTheme.colorScheme.primary,
+                            uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     )
                     Text(
                         text = stringResource(com.ai.assistance.operit.terminal.R.string.select_all),
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(end = 8.dp)
                     )
@@ -660,7 +656,7 @@ private fun CategoryCard(
                 Icon(
                     imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                     contentDescription = if (isExpanded) stringResource(com.ai.assistance.operit.terminal.R.string.collapse) else stringResource(com.ai.assistance.operit.terminal.R.string.expand),
-                    tint = Color.White
+                    tint = MaterialTheme.colorScheme.onSurface
                 )
             }
             
@@ -674,12 +670,8 @@ private fun CategoryCard(
                         isSelected = selectedPackages[pkg.id] ?: false,
                         onSelectionChange = { selected ->
                             selectedPackages[pkg.id] = selected
-                            // 检查是否需要更新全选状态
-                            val allSelectedAfterChange = category.packages.all { p ->
-                                selectedPackages[p.id] == true
-                            }
-                            categorySelectAll[category.id] = allSelectedAfterChange
                         },
+                        selectionEnabled = selectionEnabled,
                         status = packageStatus[pkg.id] ?: InstallStatus.CHECKING
                     )
                 }
@@ -693,35 +685,37 @@ private fun PackageItem(
     packageItem: PackageItem,
     isSelected: Boolean,
     onSelectionChange: (Boolean) -> Unit,
-    status: InstallStatus
+    status: InstallStatus,
+    selectionEnabled: Boolean,
 ) {
     val context = LocalContext.current
     val isInstalled = status == InstallStatus.INSTALLED
     val isChecking = status == InstallStatus.CHECKING
     val isUnknown = status == InstallStatus.UNKNOWN
+    val canSelect = selectionEnabled && (status == InstallStatus.NOT_INSTALLED || status == InstallStatus.NEEDS_CONFIGURATION)
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = !isInstalled) { onSelectionChange(!isSelected) }
+            .clickable(enabled = canSelect) { onSelectionChange(!isSelected) }
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (isChecking) {
             CircularProgressIndicator(
                 modifier = Modifier.size(24.dp),
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onSurface,
                 strokeWidth = 2.dp
             )
         } else {
             Checkbox(
                 checked = isSelected || isInstalled,
                 onCheckedChange = onSelectionChange,
-                enabled = !isInstalled,
+                enabled = canSelect,
                 colors = CheckboxDefaults.colors(
-                    checkedColor = Color(0xFF006400),
-                    uncheckedColor = Color.Gray,
-                    disabledCheckedColor = Color(0xFF006400).copy(alpha = 0.5f)
+                    checkedColor = MaterialTheme.colorScheme.primary,
+                    uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    disabledCheckedColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
                 )
             )
         }
@@ -732,35 +726,35 @@ private fun PackageItem(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = packageItem.name,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium
                 )
                 if (isInstalled) {
                     Text(
                         text = " (${stringResource(com.ai.assistance.operit.terminal.R.string.installed)})",
-                        color = Color.Green.copy(alpha = 0.8f),
+                        color = MaterialTheme.colorScheme.primary,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(start = 4.dp)
                     )
                 } else if (isUnknown) {
                     Text(
                         text = " (${stringResource(com.ai.assistance.operit.terminal.R.string.detection_failed)})",
-                        color = Color(0xFFFFA500),
+                        color = MaterialTheme.colorScheme.tertiary,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(start = 4.dp),
                     )
                 } else if (status == InstallStatus.NEEDS_CONFIGURATION) {
                     Text(
                         text = " (${stringResource(com.ai.assistance.operit.terminal.R.string.setup_needs_configuration)})",
-                        color = Color(0xFFFFA500), fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.tertiary, fontSize = 12.sp,
                     )
                 }
             }
             if (packageItem.description.isNotEmpty()) {
                 Text(
                     text = packageItem.description,
-                    color = Color.Gray,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp,
                     modifier = Modifier.padding(top = 2.dp)
                 )

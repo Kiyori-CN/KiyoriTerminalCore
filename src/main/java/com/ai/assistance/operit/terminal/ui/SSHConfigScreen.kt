@@ -7,6 +7,12 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.ai.assistance.operit.terminal.R
+import android.util.Log
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -23,8 +29,9 @@ import com.ai.assistance.operit.terminal.data.generateLocalSshPassword
 @Composable
 fun SSHConfigScreen(
     config: SSHConfig?,
-    onSave: (SSHConfig) -> Unit,
-    onDelete: () -> Unit
+    enabled: Boolean = true,
+    onSave: suspend (SSHConfig) -> Unit,
+    onDelete: suspend () -> Unit
 ) {
     Column(modifier = Modifier.padding(16.dp)) {
         Text(
@@ -46,6 +53,7 @@ fun SSHConfigScreen(
             var showDialog by remember { mutableStateOf(false) }
             
             Button(
+                enabled = enabled,
                 onClick = { showDialog = true },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = SettingsTheme.primaryColor
@@ -68,6 +76,7 @@ fun SSHConfigScreen(
             // 显示当前配置
             SSHConfigCard(
                 config = config,
+                enabled = enabled,
                 onEdit = { newConfig -> onSave(newConfig) },
                 onDelete = onDelete
             )
@@ -81,11 +90,16 @@ fun SSHConfigScreen(
 @Composable
 private fun SSHConfigCard(
     config: SSHConfig,
-    onEdit: (SSHConfig) -> Unit,
-    onDelete: () -> Unit
+    enabled: Boolean,
+    onEdit: suspend (SSHConfig) -> Unit,
+    onDelete: suspend () -> Unit
 ) {
     var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var isDeleting by remember { mutableStateOf(false) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -127,7 +141,7 @@ private fun SSHConfigCard(
                         modifier = Modifier.padding(end = 8.dp)
                     )
                     Text(
-                        text = "提示：使用 exit 退出 SSH 回到本地终端",
+                        text = stringResource(R.string.ssh_exit_ends_session),
                         fontSize = 12.sp,
                         color = SettingsTheme.onSurfaceColor
                     )
@@ -141,6 +155,7 @@ private fun SSHConfigCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(
+                    enabled = enabled && !isDeleting,
                     onClick = { showEditDialog = true },
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.outlinedButtonColors(
@@ -153,6 +168,7 @@ private fun SSHConfigCard(
                 }
                 
                 OutlinedButton(
+                    enabled = enabled && !isDeleting,
                     onClick = { showDeleteDialog = true },
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.outlinedButtonColors(
@@ -182,14 +198,35 @@ private fun SSHConfigCard(
     // 删除确认对话框
     if (showDeleteDialog) {
         AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
+            onDismissRequest = { if (!isDeleting) showDeleteDialog = false },
             title = { Text("确认删除", color = SettingsTheme.onSurfaceColor) },
-            text = { Text("确定要删除此SSH配置吗？", color = SettingsTheme.onSurfaceColor) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.ssh_delete_connection_note), color = SettingsTheme.onSurfaceColor)
+                    deleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            },
             confirmButton = {
                 Button(
+                    enabled = !isDeleting,
                     onClick = {
-                        onDelete()
-                        showDeleteDialog = false
+                        if (!isDeleting) {
+                            isDeleting = true
+                            deleteError = null
+                            scope.launch {
+                                try {
+                                    onDelete()
+                                    showDeleteDialog = false
+                                } catch (error: CancellationException) {
+                                    throw error
+                                } catch (error: Exception) {
+                                    Log.e("SSHConfigScreen", "Unable to delete SSH configuration", error)
+                                    deleteError = context.getString(R.string.ssh_config_delete_failed)
+                                } finally {
+                                    isDeleting = false
+                                }
+                            }
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SettingsTheme.errorColor
@@ -199,7 +236,7 @@ private fun SSHConfigCard(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
+                TextButton(enabled = !isDeleting, onClick = { showDeleteDialog = false }) {
                     Text("取消", color = SettingsTheme.primaryColor)
                 }
             },
@@ -215,7 +252,7 @@ private fun SSHConfigCard(
 fun SSHConfigEditDialog(
     config: SSHConfig? = null,
     onDismiss: () -> Unit,
-    onConfirm: (SSHConfig) -> Unit
+    onConfirm: suspend (SSHConfig) -> Unit
 ) {
     var host by remember { mutableStateOf(config?.host ?: "") }
     var port by remember { mutableStateOf(config?.port?.toString() ?: "22") }
@@ -237,9 +274,16 @@ fun SSHConfigEditDialog(
     // 心跳包配置
     var enableKeepAlive by remember { mutableStateOf(config?.enableKeepAlive ?: true) }
     var keepAliveInterval by remember { mutableStateOf(config?.keepAliveInterval?.toString() ?: "30") }
+    var isSaving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val draft = SSHConfigDraft(host, port, username, authType, password, privateKeyPath, passphrase,
+        enableKeepAlive, keepAliveInterval, enableReverseTunnel, remoteTunnelPort, localSshPort, localSshUsername, localSshPassword)
+    val validationErrors = draft.errors
     
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!isSaving) onDismiss() },
         title = {
             Text(
                 text = if (config == null) "添加 SSH 配置" else "编辑 SSH 配置",
@@ -248,9 +292,15 @@ fun SSHConfigEditDialog(
         },
         text = {
             LazyColumn {
+                if (saveError != null) {
+                    item { Text(checkNotNull(saveError), color = MaterialTheme.colorScheme.error) }
+                }
                 item {
                     OutlinedTextField(
+                            enabled = !isSaving,
                         value = host,
+                            isError = SSHConfigField.HOST in validationErrors && host.isNotEmpty(),
+                            supportingText = { if (SSHConfigField.HOST in validationErrors && host.isNotEmpty()) Text(stringResource(R.string.ssh_host_invalid)) },
                         onValueChange = { host = it },
                         label = { Text("主机地址") },
                         singleLine = true,
@@ -270,7 +320,10 @@ fun SSHConfigEditDialog(
                 
                 item {
                     OutlinedTextField(
+                            enabled = !isSaving,
                         value = port,
+                            isError = SSHConfigField.PORT in validationErrors && port.isNotEmpty(),
+                            supportingText = { if (SSHConfigField.PORT in validationErrors && port.isNotEmpty()) Text(stringResource(R.string.ssh_port_invalid)) },
                         onValueChange = { port = it },
                         label = { Text("端口") },
                         singleLine = true,
@@ -290,7 +343,10 @@ fun SSHConfigEditDialog(
                 
                 item {
                     OutlinedTextField(
+                            enabled = !isSaving,
                         value = username,
+                            isError = SSHConfigField.USERNAME in validationErrors && username.isNotEmpty(),
+                            supportingText = { if (SSHConfigField.USERNAME in validationErrors && username.isNotEmpty()) Text(stringResource(R.string.ssh_username_invalid)) },
                         onValueChange = { username = it },
                         label = { Text("用户名") },
                         singleLine = true,
@@ -315,12 +371,14 @@ fun SSHConfigEditDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         FilterChip(
+                            enabled = !isSaving,
                             selected = authType == SSHAuthType.PASSWORD,
                             onClick = { authType = SSHAuthType.PASSWORD },
                             label = { Text("密码认证") },
                             modifier = Modifier.weight(1f)
                         )
                         FilterChip(
+                            enabled = !isSaving,
                             selected = authType == SSHAuthType.PUBLIC_KEY,
                             onClick = { authType = SSHAuthType.PUBLIC_KEY },
                             label = { Text("公钥认证") },
@@ -335,7 +393,10 @@ fun SSHConfigEditDialog(
                 if (authType == SSHAuthType.PASSWORD) {
                     item {
                         OutlinedTextField(
+                            enabled = !isSaving,
                             value = password,
+                            isError = SSHConfigField.PASSWORD in validationErrors && password.isNotEmpty(),
+                            supportingText = { if (SSHConfigField.PASSWORD in validationErrors && password.isNotEmpty()) Text(stringResource(R.string.ssh_password_invalid)) },
                             onValueChange = { password = it },
                             label = { Text("密码") },
                             singleLine = true,
@@ -354,7 +415,10 @@ fun SSHConfigEditDialog(
                 } else {
                     item {
                         OutlinedTextField(
+                            enabled = !isSaving,
                             value = privateKeyPath,
+                            isError = SSHConfigField.PRIVATE_KEY in validationErrors && privateKeyPath.isNotEmpty(),
+                            supportingText = { if (SSHConfigField.PRIVATE_KEY in validationErrors && privateKeyPath.isNotEmpty()) Text(stringResource(R.string.ssh_private_key_invalid)) },
                             onValueChange = { privateKeyPath = it },
                             label = { Text("私钥路径") },
                             singleLine = true,
@@ -374,6 +438,7 @@ fun SSHConfigEditDialog(
                     
                     item {
                         OutlinedTextField(
+                            enabled = !isSaving,
                             value = passphrase,
                             onValueChange = { passphrase = it },
                             label = { Text("密钥密码（可选）") },
@@ -424,6 +489,7 @@ fun SSHConfigEditDialog(
                             )
                         }
                         Switch(
+                            enabled = !isSaving,
                             checked = enableKeepAlive,
                             onCheckedChange = { enableKeepAlive = it },
                             colors = SwitchDefaults.colors(
@@ -440,7 +506,10 @@ fun SSHConfigEditDialog(
                     
                     item {
                         OutlinedTextField(
+                            enabled = !isSaving,
                             value = keepAliveInterval,
+                            isError = SSHConfigField.KEEP_ALIVE in validationErrors && keepAliveInterval.isNotEmpty(),
+                            supportingText = { if (SSHConfigField.KEEP_ALIVE in validationErrors && keepAliveInterval.isNotEmpty()) Text(stringResource(R.string.ssh_keep_alive_invalid)) },
                             onValueChange = { keepAliveInterval = it },
                             label = { Text("心跳间隔（秒）") },
                             singleLine = true,
@@ -500,6 +569,7 @@ fun SSHConfigEditDialog(
                             )
                         }
                         Switch(
+                            enabled = !isSaving,
                             checked = enableReverseTunnel,
                             onCheckedChange = { enableReverseTunnel = it },
                             colors = SwitchDefaults.colors(
@@ -554,7 +624,10 @@ fun SSHConfigEditDialog(
                     
                     item {
                         OutlinedTextField(
+                            enabled = !isSaving,
                             value = remoteTunnelPort,
+                            isError = SSHConfigField.REMOTE_PORT in validationErrors && remoteTunnelPort.isNotEmpty(),
+                            supportingText = { if (SSHConfigField.REMOTE_PORT in validationErrors && remoteTunnelPort.isNotEmpty()) Text(stringResource(R.string.ssh_port_invalid)) },
                             onValueChange = { remoteTunnelPort = it },
                             label = { Text("远程隧道端口") },
                             singleLine = true,
@@ -574,7 +647,10 @@ fun SSHConfigEditDialog(
                     
                     item {
                         OutlinedTextField(
+                            enabled = !isSaving,
                             value = localSshPort,
+                            isError = SSHConfigField.LOCAL_PORT in validationErrors && localSshPort.isNotEmpty(),
+                            supportingText = { if (SSHConfigField.LOCAL_PORT in validationErrors && localSshPort.isNotEmpty()) Text(stringResource(R.string.ssh_port_invalid)) },
                             onValueChange = { localSshPort = it },
                             label = { Text("本地SSH端口") },
                             singleLine = true,
@@ -594,7 +670,10 @@ fun SSHConfigEditDialog(
                     
                     item {
                         OutlinedTextField(
+                            enabled = !isSaving,
                             value = localSshUsername,
+                            isError = SSHConfigField.LOCAL_USERNAME in validationErrors && localSshUsername.isNotEmpty(),
+                            supportingText = { if (SSHConfigField.LOCAL_USERNAME in validationErrors && localSshUsername.isNotEmpty()) Text(stringResource(R.string.ssh_username_invalid)) },
                             onValueChange = { localSshUsername = it },
                             label = { Text("本地SSH用户名") },
                             singleLine = true,
@@ -614,7 +693,10 @@ fun SSHConfigEditDialog(
                     
                     item {
                         OutlinedTextField(
+                            enabled = !isSaving,
                             value = localSshPassword,
+                            isError = SSHConfigField.LOCAL_PASSWORD in validationErrors && localSshPassword.isNotEmpty(),
+                            supportingText = { if (SSHConfigField.LOCAL_PASSWORD in validationErrors && localSshPassword.isNotEmpty()) Text(stringResource(R.string.ssh_local_password_invalid)) },
                             onValueChange = { localSshPassword = it },
                             label = { Text("本地SSH密码") },
                             singleLine = true,
@@ -636,38 +718,34 @@ fun SSHConfigEditDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val newConfig = SSHConfig(
-                        host = host,
-                        port = port.toIntOrNull() ?: 22,
-                        username = username,
-                        authType = authType,
-                        password = if (authType == SSHAuthType.PASSWORD) password else null,
-                        privateKeyPath = if (authType == SSHAuthType.PUBLIC_KEY) privateKeyPath else null,
-                        passphrase = if (authType == SSHAuthType.PUBLIC_KEY && passphrase.isNotEmpty()) passphrase else null,
-                        // 反向隧道配置
-                        enableReverseTunnel = enableReverseTunnel,
-                        remoteTunnelPort = remoteTunnelPort.toIntOrNull() ?: 8881,
-                        localSshPort = localSshPort.toIntOrNull() ?: 2223,
-                        localSshUsername = localSshUsername,
-                        localSshPassword = localSshPassword,
-                        // 心跳包配置
-                        enableKeepAlive = enableKeepAlive,
-                        keepAliveInterval = keepAliveInterval.toIntOrNull() ?: 30
-                    )
-                    onConfirm(newConfig)
+                    if (!isSaving && validationErrors.isEmpty()) {
+                        isSaving = true
+                        saveError = null
+                        val submitted = draft.toConfig(config)
+                        scope.launch {
+                            try {
+                                onConfirm(submitted)
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                Log.e("SSHConfigScreen", "Unable to save SSH configuration", error)
+                                saveError = context.getString(R.string.ssh_config_save_failed)
+                            } finally {
+                                isSaving = false
+                            }
+                        }
+                    }
                 },
-                enabled = host.isNotBlank() && username.isNotBlank() &&
-                        (authType == SSHAuthType.PUBLIC_KEY && privateKeyPath.isNotBlank() ||
-                         authType == SSHAuthType.PASSWORD && password.isNotBlank()),
+                enabled = !isSaving && validationErrors.isEmpty(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = SettingsTheme.primaryColor
                 )
             ) {
-                Text("保存")
+                Text(if (isSaving) stringResource(R.string.ssh_config_saving) else "保存")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(enabled = !isSaving, onClick = onDismiss) {
                 Text("取消", color = SettingsTheme.primaryColor)
             }
         },

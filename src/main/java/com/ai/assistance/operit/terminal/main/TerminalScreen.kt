@@ -118,6 +118,7 @@ fun TerminalScreen(
         }
         TerminalRoutes.SETTINGS_ROUTE -> {
             SettingsScreen(
+                onNavigateToSetup = { requestRoute(TerminalRoutes.SETUP_ROUTE) },
                 onBack = {
                     returnToTerminalHome()
                 }

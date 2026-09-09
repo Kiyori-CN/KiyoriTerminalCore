@@ -3,7 +3,6 @@ package com.ai.assistance.operit.terminal.utils
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
-import androidx.core.content.edit
 import com.ai.assistance.operit.terminal.data.SSHAuthType
 import com.ai.assistance.operit.terminal.data.SSHConfig
 import com.ai.assistance.operit.terminal.data.generateLocalSshPassword
@@ -42,14 +41,15 @@ class SSHConfigManager(context: Context) {
             val json = JSONObject(configJson)
             val config = parseConfig(json)
             if (json.optString("localSshPassword") != config.localSshPassword) {
-                prefs.edit { putString(KEY_CONFIG, toJson(config).toString()) }
+                check(prefs.edit().putString(KEY_CONFIG, toJson(config).toString()).commit()) {
+                    "Unable to persist local SSH credential rotation"
+                }
                 Log.i(TAG, "Rotated insecure or missing local SSH password")
             }
-            Log.d(TAG, "getConfig: Successfully parsed config: ${config.username}@${config.host}")
             config
         } catch (e: Exception) {
-            Log.e(TAG, "getConfig: Failed to parse config", e)
-            null
+            // 损坏配置不能被解释为未配置，否则启用 SSH 时可能在本地执行。
+            throw IllegalStateException("Unable to read SSH configuration; review or remove it in settings")
         }
     }
     
@@ -61,7 +61,7 @@ class SSHConfigManager(context: Context) {
         val json = toJson(config)
         val jsonString = json.toString()
 
-        prefs.edit { putString(KEY_CONFIG, jsonString) }
+        check(prefs.edit().putString(KEY_CONFIG, jsonString).commit()) { "Unable to save SSH configuration" }
     }
     
     /**
@@ -69,7 +69,7 @@ class SSHConfigManager(context: Context) {
      */
     suspend fun deleteConfig() = withContext(Dispatchers.IO) {
         Log.d(TAG, "deleteConfig: Deleting SSH config")
-        prefs.edit { remove(KEY_CONFIG) }
+        check(prefs.edit().remove(KEY_CONFIG).putBoolean(KEY_ENABLED, false).commit()) { "Unable to delete SSH configuration" }
     }
     
     /**
@@ -89,9 +89,9 @@ class SSHConfigManager(context: Context) {
     /**
      * 设置 SSH 是否启用
      */
-    fun setEnabled(enabled: Boolean) {
+    suspend fun setEnabled(enabled: Boolean) = withContext(Dispatchers.IO) {
         Log.d(TAG, "setEnabled: $enabled")
-        prefs.edit { putBoolean(KEY_ENABLED, enabled) }
+        check(prefs.edit().putBoolean(KEY_ENABLED, enabled).commit()) { "Unable to save SSH connection preference" }
     }
     
     private fun parseConfig(json: JSONObject): SSHConfig {
@@ -108,6 +108,11 @@ class SSHConfigManager(context: Context) {
             remoteTunnelPort = json.optInt("remoteTunnelPort", 8888),
             localSshPort = json.optInt("localSshPort", 8022),
             localSshUsername = json.optString("localSshUsername", "root"),
+            enablePortForwarding = json.optBoolean("enablePortForwarding", true),
+            localForwardPort = json.optInt("localForwardPort", 8751),
+            remoteForwardPort = json.optInt("remoteForwardPort", 8752),
+            enableKeepAlive = json.optBoolean("enableKeepAlive", true),
+            keepAliveInterval = json.optInt("keepAliveInterval", 30),
             localSshPassword =
                 json.optString("localSshPassword")
                     .takeUnless {
@@ -132,6 +137,11 @@ class SSHConfigManager(context: Context) {
         json.put("localSshPort", config.localSshPort)
         json.put("localSshUsername", config.localSshUsername)
         json.put("localSshPassword", config.localSshPassword)
+        json.put("enablePortForwarding", config.enablePortForwarding)
+        json.put("localForwardPort", config.localForwardPort)
+        json.put("remoteForwardPort", config.remoteForwardPort)
+        json.put("enableKeepAlive", config.enableKeepAlive)
+        json.put("keepAliveInterval", config.keepAliveInterval)
         return json
     }
 }

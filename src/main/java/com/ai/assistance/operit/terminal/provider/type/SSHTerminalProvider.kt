@@ -153,6 +153,9 @@ class SSHTerminalProvider(
     override suspend fun closeSession(sessionId: String) {
         activeSessions[sessionId]?.let { session ->
             session.process.destroy()
+            check(session.process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                "Terminal process did not exit"
+            }
             activeSessions.remove(sessionId)
             Log.d(TAG, "Closed SSH terminal session (process): $sessionId")
         }

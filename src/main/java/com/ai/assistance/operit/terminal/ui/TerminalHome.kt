@@ -84,29 +84,11 @@ fun TerminalHome(
     val fontConfigManager = remember { TerminalFontConfigManager.getInstance(context) }
     val virtualKeyboardConfigManager = remember { VirtualKeyboardConfigManager.getInstance(context) }
     
-    // 字体配置状态
-    var fontConfig by remember { 
-        mutableStateOf(fontConfigManager.loadRenderConfig())
-    }
+    // 路由重新进入时读取一次配置；不在同一帧重复加载字体文件。
+    val fontConfiguration = remember(fontConfigManager) { fontConfigManager.loadRenderConfiguration() }
+    val fontConfig = fontConfiguration.config
     var virtualKeyboardLayout by remember {
         mutableStateOf(virtualKeyboardConfigManager.loadLayout())
-    }
-    
-    // 监听字体配置变化（当从设置界面返回时）
-    LaunchedEffect(Unit) {
-        // 每次进入时重新读取配置
-        fontConfig = fontConfigManager.loadRenderConfig()
-    }
-    
-    // 当组件重新组合时，检查配置是否变化并更新
-    DisposableEffect(Unit) {
-        val newConfig = fontConfigManager.loadRenderConfig()
-        
-        if (fontConfig != newConfig) {
-            fontConfig = newConfig
-        }
-        
-        onDispose { }
     }
 
     DisposableEffect(context, virtualKeyboardConfigManager) {
@@ -275,9 +257,8 @@ fun TerminalHome(
     fun toggleDirectInputMode() {
         isDirectInputMode = !isDirectInputMode
         if (isDirectInputMode) {
-            // 进入直接输入模式：展开虚拟键盘，清空命令并收起系统键盘
+            // 切换输入方式保留未发送的命令，返回命令模式后继续编辑。
             showVirtualKeyboard = true
-            env.onCommandChange("")
             keyboardController?.hide()
         } else {
             // 退出直接输入模式：关闭虚拟键盘面板并恢复系统键盘
@@ -320,6 +301,55 @@ fun TerminalHome(
             .fillMaxSize()
             .background(Color.Black)
     ) {
+        if (env.initialSessionState != com.ai.assistance.operit.terminal.data.SessionInitState.READY &&
+            env.sessions.none { it.initState == com.ai.assistance.operit.terminal.data.SessionInitState.READY }) {
+            val failed = env.initialSessionState == com.ai.assistance.operit.terminal.data.SessionInitState.FAILED
+            Surface(color = if (failed) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainer) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(if (failed) com.ai.assistance.operit.terminal.R.string.terminal_initial_session_failed
+                        else com.ai.assistance.operit.terminal.R.string.initializing),
+                        color = if (failed) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.bodyMedium)
+                    if (failed) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = env::retryInitialSession, enabled = !env.isCreatingSession) {
+                                Text(stringResource(com.ai.assistance.operit.terminal.R.string.terminal_initial_session_retry))
+                            }
+                            TextButton(onClick = { prepareForNavigation(); onNavigateToSettings() }) {
+                                Text(stringResource(com.ai.assistance.operit.terminal.R.string.settings_title))
+                            }
+                        }
+                    } else LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            }
+        }
+        if (fontConfiguration.fontLoadFailed) {
+            Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.terminal_font_load_failed),
+                        modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer)
+                    TextButton(onClick = { prepareForNavigation(); onNavigateToSettings() }) {
+                        Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_settings_title))
+                    }
+                }
+            }
+        }
+        if (env.actionFailed) {
+            Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.terminal_action_failed),
+                        modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer)
+                    TextButton(onClick = env::dismissActionError) {
+                        Text(stringResource(com.ai.assistance.operit.terminal.R.string.ssh_confirm_action))
+                    }
+                }
+            }
+        }
+        if (env.isCreatingSession) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         env.setupProgress?.let { progress ->
             Text(
                 text = stringResource(
@@ -562,13 +592,13 @@ fun TerminalHome(
             title = {
                 Text(
                     text = stringResource(com.ai.assistance.operit.terminal.R.string.confirm_delete_session),
-                    color = Color.White
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             },
             text = {
                 Text(
                     text = stringResource(com.ai.assistance.operit.terminal.R.string.delete_session_message, sessionTitle),
-                    color = Color.Gray
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             },
             confirmButton = {
@@ -583,7 +613,7 @@ fun TerminalHome(
                 ) {
                     Text(
                         text = stringResource(com.ai.assistance.operit.terminal.R.string.delete),
-                        color = Color.Red
+                        color = MaterialTheme.colorScheme.error
                     )
                 }
             },
@@ -596,13 +626,13 @@ fun TerminalHome(
                 ) {
                     Text(
                         text = stringResource(com.ai.assistance.operit.terminal.R.string.cancel),
-                        color = Color.White
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             },
-            containerColor = Color(0xFF2D2D2D),
-            titleContentColor = Color.White,
-            textContentColor = Color.Gray
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            titleContentColor = MaterialTheme.colorScheme.onSurface,
+            textContentColor = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

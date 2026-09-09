@@ -3,7 +3,6 @@ package com.ai.assistance.operit.terminal.utils
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
-import androidx.core.content.edit
 import com.ai.assistance.operit.terminal.data.MirrorSource
 import com.ai.assistance.operit.terminal.data.PackageManagerType
 import kotlinx.serialization.encodeToString
@@ -53,12 +52,14 @@ class SourceManager(context: Context) {
         return try {
             json.decodeFromString<List<MirrorSource>>(jsonString)
         } catch (e: Exception) {
-            emptyList()
+            // 序列化异常可能包含原始 URL 和凭据，诊断只保留异常类型。
+            throw IllegalStateException("Unable to read custom mirror sources (${e.javaClass.simpleName})")
         }
     }
     
     // 保存自定义源
     fun saveCustomSource(pm: PackageManagerType, source: MirrorSource) {
+        validateMirrorSource(source)
         val customSources = getCustomSources(pm).toMutableList()
         // 如果已存在相同ID的源，替换它；否则添加
         val index = customSources.indexOfFirst { it.id == source.id }
@@ -69,7 +70,7 @@ class SourceManager(context: Context) {
         }
         
         val key = customSourcesKey(pm)
-        prefs.edit {putString(key, json.encodeToString(customSources))}
+        check(prefs.edit().putString(key, json.encodeToString(customSources)).commit()) { "Unable to save mirror source" }
     }
     
     // 删除自定义源，并在同一份偏好提交中维护选中源不变量。
@@ -79,12 +80,9 @@ class SourceManager(context: Context) {
 
         val selectedKey = selectedSourceKey(pm)
         val selectedId = getSelectedSourceId(pm)
-        prefs.edit(commit = true) {
-            putString(customSourcesKey(pm), json.encodeToString(customSources))
-            if (selectedId == sourceId) {
-                putString(selectedKey, defaultSourceId(pm))
-            }
-        }
+        val editor = prefs.edit().putString(customSourcesKey(pm), json.encodeToString(customSources))
+        if (selectedId == sourceId) editor.putString(selectedKey, defaultSourceId(pm))
+        check(editor.commit()) { "Unable to delete mirror source" }
     }
     
     // 获取所有源（内置 + 自定义）
@@ -114,7 +112,7 @@ class SourceManager(context: Context) {
             // selected-ID invariant durable prevents environment startup from failing later in
             // `getSelectedSource()` with an unrelated NullPointerException.
             Log.w(TAG, "Resetting unknown selected ${pm.name} source '$storedId' to '$resolvedId'")
-            prefs.edit(commit = true) { putString(selectedSourceKey(pm), resolvedId) }
+            check(prefs.edit().putString(selectedSourceKey(pm), resolvedId).commit()) { "Unable to repair selected mirror source" }
         }
         return resolvedId
     }
@@ -122,63 +120,20 @@ class SourceManager(context: Context) {
     // 获取当前源
     fun getSelectedSource(pm: PackageManagerType): MirrorSource {
         val id = getSelectedSourceId(pm)
-        return sourcesFor(pm).firstOrNull { it.id == id }
-            ?: error("Selected ${pm.name} source '$id' is not available")
+        return (sourcesFor(pm).firstOrNull { it.id == id }
+            ?: error("Selected ${pm.name} source '$id' is not available")).also(::validateMirrorSource)
     }
 
     // 保存选择的源ID
     fun setSelectedSourceId(pm: PackageManagerType, sourceId: String) {
-        require(sourcesFor(pm).any { it.id == sourceId }) {
-            "Unknown ${pm.name} source '$sourceId'"
+        val source = requireNotNull(sourcesFor(pm).firstOrNull { it.id == sourceId }) {
+            "Unknown mirror source"
         }
-        prefs.edit { putString(selectedSourceKey(pm), sourceId) }
+        validateMirrorSource(source)
+        check(prefs.edit().putString(selectedSourceKey(pm), sourceId).commit()) { "Unable to select mirror source" }
     }
     
-    // 生成更改APT源的Shell命令
-    fun getAptSourceChangeCommand(source: MirrorSource): String {
-        val sourceUrl = source.url
-        return """
-        change_ubuntu_source(){
-          cat <<'EOF' > ${'$'}UBUNTU_PATH/etc/apt/sources.list
-        # From Kiyori Settings - ${source.name}
-        ${aptSourceDistributionLines(sourceUrl)}
-        EOF
-          echo "APT source changed to: ${source.name}"
-        }
-        change_ubuntu_source
-        """.trimIndent()
-    }
-    
-    // 生成更改Pip/Uv源的Shell命令
-    fun getPipSourceChangeCommand(source: MirrorSource): String {
-        val sourceUrl = source.url
-        return """
-        # For pip/pipx
-        mkdir -p ~/.config/pip
-        echo '[global]' > ~/.config/pip/pip.conf
-        echo 'index-url = ${sourceUrl}' >> ~/.config/pip/pip.conf
-        
-        # For uv/uvx
-        mkdir -p ~/.config/uv
-        echo 'index-url = "${sourceUrl}"' > ~/.config/uv/uv.toml
-        echo "Pip/Uv source updated to ${source.name}"
-        """.trimIndent()
-    }
-
-    // 生成更改NPM源的Shell命令
-    fun getNpmSourceChangeCommand(source: MirrorSource): String {
-        val sourceUrl = source.url
-        return "npm config set registry ${sourceUrl}"
-    }
-    
-    // 生成Rust镜像源的环境变量设置命令
-    fun getRustSourceEnvCommand(source: MirrorSource): String {
-        val baseUrl = source.url
-        return """
-        export RUSTUP_DIST_SERVER=${baseUrl}
-        export RUSTUP_UPDATE_ROOT=${baseUrl}/rustup
-        """.trimIndent()
-    }
+    fun getRustSourceEnvCommand(source: MirrorSource): String = rustSourceEnvironmentCommand(source)
 
     private fun customSourcesKey(pm: PackageManagerType): String = when (pm) {
         PackageManagerType.APT -> "custom_apt_sources"
@@ -213,12 +168,12 @@ class SourceManager(context: Context) {
     }
 }
 
-internal fun aptSourceDistributionLines(sourceUrl: String): String =
+internal fun aptSourceDistributionLines(sourceUrl: String, codename: String = "resolute"): String =
     """
-    deb $sourceUrl resolute main restricted universe multiverse
-    deb $sourceUrl resolute-updates main restricted universe multiverse
-    deb $sourceUrl resolute-backports main restricted universe multiverse
-    deb $sourceUrl resolute-security main restricted universe multiverse
+    deb $sourceUrl ${codename} main restricted universe multiverse
+    deb $sourceUrl ${codename}-updates main restricted universe multiverse
+    deb $sourceUrl ${codename}-backports main restricted universe multiverse
+    deb $sourceUrl ${codename}-security main restricted universe multiverse
     """.trimIndent()
 
 /**

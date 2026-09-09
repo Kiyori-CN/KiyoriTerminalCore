@@ -3,7 +3,6 @@ package com.ai.assistance.operit.terminal.utils
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Typeface
-import androidx.core.content.edit
 import com.ai.assistance.operit.terminal.view.canvas.RenderConfig
 import com.ai.assistance.operit.terminal.R
 import java.io.File
@@ -12,6 +11,8 @@ import java.io.File
  * 终端字体配置管理器
  * 管理终端字体的设置，包括字体大小、字体路径、字体名称等
  */
+internal data class TerminalRenderConfiguration(val config: RenderConfig, val fontLoadFailed: Boolean)
+
 class TerminalFontConfigManager private constructor(context: Context) {
     private val appContext: Context = context.applicationContext
     private val prefs: SharedPreferences = appContext.getSharedPreferences(
@@ -45,12 +46,13 @@ class TerminalFontConfigManager private constructor(context: Context) {
     /**
      * 加载完整的渲染配置
      */
-    fun loadRenderConfig(): RenderConfig {
-        return RenderConfig(
-            fontSize = getFontSize(),
-            typeface = loadTypeface(),
-            targetFps = getTargetFps()
-            // nerdFontPath 和其他参数可以使用 RenderConfig 的默认值
+    fun loadRenderConfig(): RenderConfig = loadRenderConfiguration().config
+
+    internal fun loadRenderConfiguration(): TerminalRenderConfiguration {
+        val font = loadTypeface()
+        return TerminalRenderConfiguration(
+            RenderConfig(fontSize = getFontSize(), typeface = font.first, targetFps = getTargetFps()),
+            font.second,
         )
     }
 
@@ -61,35 +63,37 @@ class TerminalFontConfigManager private constructor(context: Context) {
      * 默认回退到内置的 JetBrains Mono Nerd Font，确保是真正等宽的字体，
      * 避免各家 ROM 对 "monospace" 映射不一致导致的对齐问题。
      */
-    private fun loadTypeface(): Typeface {
+    private fun loadTypeface(): Pair<Typeface, Boolean> {
         val fontPath = getFontPath()
         val fontName = getFontName()
+        var missingCustomFile = false
 
         return try {
             // 1. 用户显式指定了字体文件路径
             fontPath?.let { path ->
                 val file = File(path)
                 if (file.exists() && file.isFile) {
-                    return Typeface.createFromFile(file)
+                    return Typeface.createFromFile(file) to false
                 }
+                missingCustomFile = true
             }
 
             // 2. 用户显式指定了系统字体名称
             fontName?.let { name ->
-                return when (name.lowercase()) {
+                return (when (name.lowercase()) {
                     // 这里仍然允许用户强制使用系统字体
                     "monospace", "mono" -> Typeface.MONOSPACE
                     "serif" -> Typeface.SERIF
                     "sans-serif", "sans" -> Typeface.SANS_SERIF
                     else -> Typeface.create(name, Typeface.NORMAL)
-                }
+                }) to missingCustomFile
             }
 
             // 3. 未指定任何字体时，统一使用内置 JetBrains Mono Nerd Font（真·等宽）
-            appContext.resources.getFont(R.font.jetbrains_mono_nerd_font_regular)
+            appContext.resources.getFont(R.font.jetbrains_mono_nerd_font_regular) to missingCustomFile
         } catch (e: Exception) {
-            // 兜底：如果资源加载或自定义字体失败，仍然回退到系统 MONOSPACE
-            Typeface.MONOSPACE
+            // 保留原有字体恢复行为，同时向 UI 返回失败状态，避免把替代字体说成用户所选字体。
+            Typeface.MONOSPACE to true
         }
     }
 
@@ -104,7 +108,8 @@ class TerminalFontConfigManager private constructor(context: Context) {
      * 设置字体大小
      */
     fun setFontSize(size: Float) {
-        prefs.edit {putFloat(KEY_FONT_SIZE, size)}
+        require(size.isFinite() && size in 12f..100f) { "Invalid terminal font size" }
+        check(prefs.edit().putFloat(KEY_FONT_SIZE, size).commit()) { "Unable to save font size" }
     }
     
     /**
@@ -119,7 +124,13 @@ class TerminalFontConfigManager private constructor(context: Context) {
      * 设置字体文件路径
      */
     fun setFontPath(path: String?) {
-        prefs.edit {putString(KEY_FONT_PATH, path)}
+        val normalized = path?.takeIf(String::isNotBlank)
+        normalized?.let {
+            val file = File(it)
+            require(file.isAbsolute && file.isFile && file.canRead()) { "Font file is not readable" }
+            Typeface.createFromFile(file)
+        }
+        check(prefs.edit().putString(KEY_FONT_PATH, normalized).commit()) { "Unable to save font path" }
     }
     
     /**
@@ -134,7 +145,9 @@ class TerminalFontConfigManager private constructor(context: Context) {
      * 设置系统字体名称（如 "monospace", "serif", "sans-serif"）
      */
     fun setFontName(name: String?) {
-        prefs.edit {putString(KEY_FONT_NAME, name)}
+        val normalized = name?.trim()?.takeIf(String::isNotEmpty)
+        require(normalized?.none { it.isISOControl() } != false) { "Invalid font family name" }
+        check(prefs.edit().putString(KEY_FONT_NAME, normalized).commit()) { "Unable to save font name" }
     }
 
     /**
@@ -149,20 +162,15 @@ class TerminalFontConfigManager private constructor(context: Context) {
      * 设置目标帧率
      */
     fun setTargetFps(fps: Int) {
-        prefs.edit {
-                putInt(KEY_TARGET_FPS, fps.coerceIn(MIN_TARGET_FPS, MAX_TARGET_FPS))
-            }
+        require(fps in MIN_TARGET_FPS..MAX_TARGET_FPS) { "Invalid target frame rate" }
+        check(prefs.edit().putInt(KEY_TARGET_FPS, fps).commit()) { "Unable to save target frame rate" }
     }
     
     /**
      * 清除所有字体设置，恢复默认
      */
     fun resetToDefault() {
-        prefs.edit {
-                remove(KEY_FONT_SIZE)
-                .remove(KEY_FONT_PATH)
-                .remove(KEY_FONT_NAME)
-                .remove(KEY_TARGET_FPS)
-            }
+        check(prefs.edit().remove(KEY_FONT_SIZE).remove(KEY_FONT_PATH).remove(KEY_FONT_NAME)
+            .remove(KEY_TARGET_FPS).commit()) { "Unable to reset font settings" }
     }
 }

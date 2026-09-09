@@ -127,6 +127,9 @@ class LocalTerminalProvider(
     override suspend fun closeSession(sessionId: String) {
         activeSessions[sessionId]?.let { session ->
             session.process.destroy()
+            check(session.process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                "Terminal process did not exit"
+            }
             activeSessions.remove(sessionId)
             Log.d(TAG, "Closed local terminal session: $sessionId")
         }
@@ -153,7 +156,7 @@ class LocalTerminalProvider(
         return try {
             shell.mutex.withLock {
                 val token = UUID.randomUUID().toString()
-                Log.d(TAG, "Hidden exec command started: key=$executorKey token=$token timeoutMs=$timeoutMs command=${command.lineSequence().firstOrNull().orEmpty().take(200)}")
+                Log.d(TAG, "Hidden exec command started: key=$executorKey token=$token timeoutMs=$timeoutMs")
                 val wrappedCommand = buildHiddenExecEnvelope(command, token)
                 withContext(Dispatchers.IO) {
                     shell.writer.write(wrappedCommand)
@@ -275,7 +278,6 @@ class LocalTerminalProvider(
                         val chunk =
                             shell.outputChannel.receiveCatching().getOrNull()
                                 ?: break
-                        logHiddenExecChunk(shell.key, "ready", chunk)
                         builder.append(chunk)
                         if (readyDetector.append(chunk)) {
                             break
@@ -342,7 +344,6 @@ class LocalTerminalProvider(
                 withTimeoutOrNull((deadline - System.currentTimeMillis()).coerceAtLeast(1L)) {
                     shell.outputChannel.receiveCatching().getOrNull()
                 } ?: break
-            logHiddenExecChunk(shell.key, token, chunk)
             builder.append(chunk)
             extractHiddenExecPid(builder.toString(), token)?.let { shell.activePid = it }
             if (builder.indexOf(endMarkerPrefix) >= 0) {
@@ -475,8 +476,7 @@ class LocalTerminalProvider(
                 val chunk =
                     shell.outputChannel.receiveCatching().getOrNull()
                         ?: break
-                logHiddenExecChunk(shell.key, token, chunk)
-                builder.append(chunk)
+                    builder.append(chunk)
             }
         }
     }
@@ -542,22 +542,24 @@ class LocalTerminalProvider(
     ) {
         val shell =
             if (expectedShell == null) {
-                hiddenExecShells.remove(executorKey)
+                hiddenExecShells[executorKey]
             } else {
-                // Remove only the expected registry entry, but always close the
-                // supplied instance. It may be a freshly-created shell that has
-                // not been registered yet, or an older shell replaced by another
-                // invocation.
-                hiddenExecShells.remove(executorKey, expectedShell)
+                // 只关闭指定实例，退出确认后按身份移除；不影响另一次调用已替换的新实例。
                 expectedShell
             }
         shell?.let {
-            withContext(Dispatchers.IO) {
-                it.activePid?.let(::killHiddenExecProcessGroup)
-                runCatching { it.writer.close() }
-                runCatching { it.process.destroy() }
-                runCatching { it.readJob.cancel() }
-                runCatching { it.outputChannel.close() }
+            // 取消命令时也必须完成有界清理；确认退出前保留注册项，维护不能漏掉未停止进程。
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                try {
+                    it.activePid?.let(::killHiddenExecProcessGroup)
+                    runCatching { it.writer.close() }
+                    it.process.destroy()
+                    check(it.process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) { "Hidden terminal process did not exit" }
+                    hiddenExecShells.remove(executorKey, it)
+                } finally {
+                    it.readJob.cancel()
+                    it.outputChannel.close()
+                }
             }
             Log.d(TAG, "Closed hidden exec shell: $executorKey")
         }
@@ -595,20 +597,6 @@ class LocalTerminalProvider(
             append("rm -f \"\$__operit_hidden_script\"\n")
             append("printf '%s:%s\\n' '$END_MARKER_PREFIX$token' \"\$__operit_hidden_rc\"\n")
         }
-    }
-
-    private fun logHiddenExecChunk(
-        executorKey: String,
-        token: String,
-        chunk: String
-    ) {
-        chunk.lineSequence()
-            .filter { it.isNotBlank() }
-            .forEach { line ->
-                line.chunked(3000).forEach { part ->
-                    Log.d(TAG, "Hidden exec output [$executorKey][$token]: $part")
-                }
-            }
     }
 
     private fun buildProcessBuilder(

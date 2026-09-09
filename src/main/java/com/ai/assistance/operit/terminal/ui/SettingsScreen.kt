@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,34 +37,38 @@ import com.ai.assistance.operit.terminal.data.SourceConfig
 import com.ai.assistance.operit.terminal.utils.TerminalFontConfigManager
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
-// 三色系主题配置
+// 设置面板跟随宿主主题；原生终端画布继续使用自己的 RenderConfig。
 object SettingsTheme {
-    // 蓝色系 - 主要操作和强调
-    val primaryColor = Color(0xFF2196F3)        // 主色
-    val primaryVariant = Color(0xFF1976D2)      // 深蓝变体
-    
-    // 灰色系 - 背景和文字
-    val backgroundColor = Color(0xFF121212)     // 深色背景
-    val surfaceColor = Color(0xFF1E1E1E)       // 卡片背景
-    val onSurfaceColor = Color(0xFFE0E0E0)     // 主要文字
-    val onSurfaceVariant = Color(0xFFB0B0B0)   // 次要文字
-    
-    // 红色系 - 危险操作和错误
-    val errorColor = Color(0xFFE53E3E)         // 错误/危险色
-    val errorVariant = Color(0xFFD32F2F)       // 深红变体
+    val primaryColor: Color @Composable get() = MaterialTheme.colorScheme.primary
+    val primaryVariant: Color @Composable get() = MaterialTheme.colorScheme.primary
+    val backgroundColor: Color @Composable get() = MaterialTheme.colorScheme.background
+    val surfaceColor: Color @Composable get() = MaterialTheme.colorScheme.surfaceContainerLow
+    val onSurfaceColor: Color @Composable get() = MaterialTheme.colorScheme.onSurface
+    val onSurfaceVariant: Color @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+    val errorColor: Color @Composable get() = MaterialTheme.colorScheme.error
+    val errorVariant: Color @Composable get() = MaterialTheme.colorScheme.error
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToSetup: () -> Unit,
 ) {
     val context = LocalContext.current
+    val settingsScope = rememberCoroutineScope()
+    var fontResetPending by remember { mutableStateOf(false) }
+    var fontResetFailed by remember { mutableStateOf(false) }
     val viewModel: SettingsViewModel = viewModel { SettingsViewModel(context.applicationContext as android.app.Application) }
     
     val cacheSize by viewModel.cacheSize.collectAsState()
     val isCalculatingCache by viewModel.isCalculatingCache.collectAsState()
+    val isClearingCache by viewModel.isClearingCache.collectAsState()
     
     // FTP服务器相关状态
     val ftpServerStatus by viewModel.ftpServerStatus.collectAsState()
@@ -72,6 +77,7 @@ fun SettingsScreen(
     
     // 源管理相关状态
     val sourceConfigs by viewModel.sourceConfigs.collectAsState()
+    val sourceLoadError by viewModel.sourceLoadError.collectAsState()
     var showSourceDialogFor by remember { mutableStateOf<PackageManagerType?>(null) }
 
     val virtualKeyboardLayout by viewModel.virtualKeyboardLayout.collectAsState()
@@ -91,6 +97,10 @@ fun SettingsScreen(
     // SSH配置相关状态（单一配置）
     val sshConfig by viewModel.sshConfig.collectAsState()
     val sshEnabled by viewModel.sshEnabled.collectAsState()
+    val sshLoadError by viewModel.sshLoadError.collectAsState()
+    val sshBusy by viewModel.sshBusy.collectAsState()
+    var sshTogglePending by remember { mutableStateOf(false) }
+    var sshToggleFailed by remember { mutableStateOf(false) }
     var showSshToolsMissingDialog by remember { mutableStateOf(false) }
     var showOpensshMissingDialog by remember { mutableStateOf(false) }
     
@@ -104,6 +114,7 @@ fun SettingsScreen(
     val isUnmountingChrootMounts by viewModel.isUnmountingChrootMounts.collectAsState()
     
     var showClearCacheDialog by remember { mutableStateOf(false) }
+    var showUnmountConfirmDialog by remember { mutableStateOf(false) }
 
     val virtualKeyboardSummary = remember(virtualKeyboardLayout) {
         virtualKeyboardLayout.rows.joinToString(" | ") { row ->
@@ -175,7 +186,7 @@ fun SettingsScreen(
                         if (isFtpServerRunning) {
                             Button(
                                 onClick = { viewModel.stopFtpServer() },
-                                enabled = !isManagingFtpServer,
+                                enabled = !isManagingFtpServer && !isClearingCache && !isUnmountingChrootMounts,
                                 colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.errorColor),
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -194,7 +205,7 @@ fun SettingsScreen(
                         } else {
                             Button(
                                 onClick = { viewModel.startFtpServer() },
-                                enabled = !isManagingFtpServer,
+                                enabled = !isManagingFtpServer && !isClearingCache && !isUnmountingChrootMounts,
                                 colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor),
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -259,7 +270,7 @@ fun SettingsScreen(
                     ) {
                         OutlinedButton(
                             onClick = { viewModel.getCacheSize() },
-                            enabled = !isCalculatingCache,
+                            enabled = !isCalculatingCache && !isClearingCache,
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.outlinedButtonColors(
                                 contentColor = SettingsTheme.primaryColor
@@ -280,13 +291,14 @@ fun SettingsScreen(
                         }
                         
                         Button(
+                            enabled = !isClearingCache && !isManagingFtpServer && !isUnmountingChrootMounts,
                             onClick = { showClearCacheDialog = true },
                             colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.errorColor),
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(stringResource(com.ai.assistance.operit.terminal.R.string.reset_environment))
+                            Text(stringResource(if (isClearingCache) com.ai.assistance.operit.terminal.R.string.environment_resetting else com.ai.assistance.operit.terminal.R.string.reset_environment))
                         }
                     }
                 }
@@ -394,9 +406,16 @@ fun SettingsScreen(
                         Switch(
                             checked = sshEnabled,
                             onCheckedChange = { enabled ->
-                                viewModel.setSSHEnabled(enabled)
+                                sshTogglePending = true
+                                sshToggleFailed = false
+                                settingsScope.launch {
+                                    try { viewModel.setSSHEnabled(enabled) }
+                                    catch (cancelled: CancellationException) { throw cancelled }
+                                    catch (_: Exception) { sshToggleFailed = true }
+                                    finally { sshTogglePending = false }
+                                }
                             },
-                            enabled = sshConfig != null,
+                            enabled = (sshEnabled || (sshConfig != null && !sshLoadError)) && !sshBusy && !sshTogglePending,
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = SettingsTheme.primaryColor,
                                 checkedTrackColor = SettingsTheme.primaryColor.copy(alpha = 0.5f)
@@ -404,7 +423,11 @@ fun SettingsScreen(
                         )
                     }
                     
-                    if (sshConfig == null) {
+                    if (sshToggleFailed) {
+                        Text(stringResource(com.ai.assistance.operit.terminal.R.string.terminal_settings_save_failed), color = MaterialTheme.colorScheme.error)
+                    }
+                    SSHConnectionActions(viewModel, enabled = !sshTogglePending && !isClearingCache && !isUnmountingChrootMounts)
+                    if (sshConfig == null && !sshLoadError) {
                         Text(
                             text = stringResource(com.ai.assistance.operit.terminal.R.string.ssh_config_required),
                             style = MaterialTheme.typography.bodySmall,
@@ -419,8 +442,9 @@ fun SettingsScreen(
                     )
                     
                     // SSH 配置表单
-                    SSHConfigScreen(
+                    if (!sshLoadError) SSHConfigScreen(
                         config = sshConfig,
+                        enabled = !sshBusy && !sshTogglePending,
                         onSave = { config ->
                             viewModel.saveSSHConfig(config)
                         },
@@ -548,7 +572,7 @@ fun SettingsScreen(
                         ) {
                             OutlinedButton(
                                 onClick = { viewModel.inspectChrootMounts() },
-                                enabled = !isInspectingChrootMounts && !isUnmountingChrootMounts,
+                                enabled = !isInspectingChrootMounts && !isUnmountingChrootMounts && !isClearingCache && !isManagingFtpServer,
                                 modifier = Modifier.weight(1f),
                                 colors = ButtonDefaults.outlinedButtonColors(
                                     contentColor = SettingsTheme.primaryColor
@@ -569,8 +593,8 @@ fun SettingsScreen(
                             }
 
                             Button(
-                                onClick = { viewModel.unmountChrootMounts() },
-                                enabled = !isInspectingChrootMounts && !isUnmountingChrootMounts,
+                                onClick = { showUnmountConfirmDialog = true },
+                                enabled = !isInspectingChrootMounts && !isUnmountingChrootMounts && !isClearingCache && !isManagingFtpServer,
                                 colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.errorColor),
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -652,7 +676,8 @@ fun SettingsScreen(
                     // 字体大小设置
                     SettingsItem(
                         title = stringResource(com.ai.assistance.operit.terminal.R.string.font_size_title),
-                        subtitle = "${fontSize.toInt()}sp",
+                        enabled = !fontResetPending,
+                        subtitle = "$fontSize px",
                         onClick = { showFontSizeDialog = true },
                         icon = Icons.Default.TextFields
                     )
@@ -661,6 +686,7 @@ fun SettingsScreen(
                     // 渲染帧率设置
                     SettingsItem(
                         title = stringResource(com.ai.assistance.operit.terminal.R.string.target_fps_title),
+                        enabled = !fontResetPending,
                         subtitle = "${targetFps} FPS",
                         onClick = { showTargetFpsDialog = true },
                         icon = Icons.Default.TextFields
@@ -670,6 +696,7 @@ fun SettingsScreen(
                     // 字体路径设置
                     SettingsItem(
                         title = stringResource(com.ai.assistance.operit.terminal.R.string.font_path_title),
+                        enabled = !fontResetPending,
                         subtitle = fontPath.ifEmpty { stringResource(com.ai.assistance.operit.terminal.R.string.font_not_set) },
                         onClick = { showFontPathDialog = true },
                         icon = Icons.Default.Folder
@@ -679,21 +706,38 @@ fun SettingsScreen(
                     // 系统字体名称设置
                     SettingsItem(
                         title = stringResource(com.ai.assistance.operit.terminal.R.string.font_name_title),
+                        enabled = !fontResetPending,
                         subtitle = fontName.ifEmpty { stringResource(com.ai.assistance.operit.terminal.R.string.font_not_set) },
                         onClick = { showFontNameDialog = true },
                         icon = Icons.Default.TextFields
                     )
                     HorizontalDivider(color = SettingsTheme.backgroundColor)
                     
+                    if (fontResetFailed) {
+                        Text(stringResource(com.ai.assistance.operit.terminal.R.string.terminal_settings_save_failed), color = MaterialTheme.colorScheme.error)
+                    }
                     // 重置按钮
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedButton(
+                        enabled = !fontResetPending,
                         onClick = {
-                            fontConfigManager.resetToDefault()
-                            fontSize = fontConfigManager.getFontSize()
-                            fontPath = fontConfigManager.getFontPath() ?: ""
-                            fontName = fontConfigManager.getFontName() ?: ""
-                            targetFps = fontConfigManager.getTargetFps()
+                            if (!fontResetPending) {
+                                fontResetPending = true
+                                fontResetFailed = false
+                                settingsScope.launch {
+                                    try {
+                                        withContext(Dispatchers.IO) { fontConfigManager.resetToDefault() }
+                                        fontSize = fontConfigManager.getFontSize()
+                                        fontPath = fontConfigManager.getFontPath().orEmpty()
+                                        fontName = fontConfigManager.getFontName().orEmpty()
+                                        targetFps = fontConfigManager.getTargetFps()
+                                    } catch (cancelled: CancellationException) { throw cancelled }
+                                    catch (error: Exception) {
+                                        android.util.Log.e("SettingsScreen", "Unable to reset font settings (${error.javaClass.simpleName})")
+                                        fontResetFailed = true
+                                    } finally { fontResetPending = false }
+                                }
+                            }
                         },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.outlinedButtonColors(
@@ -701,7 +745,7 @@ fun SettingsScreen(
                         ),
                         border = androidx.compose.foundation.BorderStroke(1.dp, SettingsTheme.primaryColor)
                     ) {
-                        Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_reset_default))
+                        Text(stringResource(if (fontResetPending) com.ai.assistance.operit.terminal.R.string.ssh_config_saving else com.ai.assistance.operit.terminal.R.string.font_reset_default))
                     }
                 }
             }
@@ -722,6 +766,12 @@ fun SettingsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     
+                    if (sourceLoadError) {
+                        Text(stringResource(com.ai.assistance.operit.terminal.R.string.source_load_failed), color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = viewModel::reloadSourceConfigs) {
+                            Text(stringResource(com.ai.assistance.operit.terminal.R.string.setup_refresh))
+                        }
+                    }
                     sourceConfigs.forEach { (pm, config) ->
                         SettingsItem(
                             title = pm.displayName,
@@ -748,16 +798,19 @@ fun SettingsScreen(
                 ) 
             },
             text = { 
-                Text(
-                    text = stringResource(com.ai.assistance.operit.terminal.R.string.ssh_tools_missing_message),
-                    color = SettingsTheme.onSurfaceColor
-                ) 
+                SelectionContainer {
+                    Text(
+                        text = stringResource(com.ai.assistance.operit.terminal.R.string.ssh_tools_missing_message),
+                        color = SettingsTheme.onSurfaceColor,
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    )
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
                         viewModel.onSshToolsMissingDialogDismissed()
-                        onBack() // 返回上一页，方便用户去环境配置
+                        onNavigateToSetup()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
                 ) {
@@ -786,53 +839,55 @@ fun SettingsScreen(
                 ) 
             },
             text = { 
-                Column {
-                    Text(
-                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_missing_desc),
-                        color = SettingsTheme.onSurfaceColor,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_local_component),
-                        color = SettingsTheme.primaryColor,
-                        fontSize = 14.sp
-                    )
-                    Text(
-                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_go_to_install),
-                        color = SettingsTheme.onSurfaceVariant,
-                        fontSize = 12.sp
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_remote_component),
-                        color = SettingsTheme.primaryColor,
-                        fontSize = 14.sp
-                    )
-                    Text(
-                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_remote_install),
-                        color = SettingsTheme.onSurfaceVariant,
-                        fontSize = 12.sp
-                    )
-                    Text(
-                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_install_ubuntu_cmd),
-                        color = SettingsTheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                    )
-                    Text(
-                        text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_install_centos_cmd),
-                        color = SettingsTheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                    )
+                SelectionContainer {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        Text(
+                            text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_missing_desc),
+                            color = SettingsTheme.onSurfaceColor,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_local_component),
+                            color = SettingsTheme.primaryColor,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_go_to_install),
+                            color = SettingsTheme.onSurfaceVariant,
+                            fontSize = 12.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_remote_component),
+                            color = SettingsTheme.primaryColor,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_remote_install),
+                            color = SettingsTheme.onSurfaceVariant,
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_install_ubuntu_cmd),
+                            color = SettingsTheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                        Text(
+                            text = stringResource(com.ai.assistance.operit.terminal.R.string.openssh_install_centos_cmd),
+                            color = SettingsTheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
                         viewModel.onOpensshMissingDialogDismissed()
-                        onBack() // 返回上一页，方便用户去环境配置
+                        onNavigateToSetup()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
                 ) {
@@ -850,230 +905,67 @@ fun SettingsScreen(
         )
     }
 
-    // 字体大小设置对话框
     if (showFontSizeDialog) {
-        var fontSizeInput by remember { mutableStateOf(fontSize.toInt().toString()) }
-        AlertDialog(
-            onDismissRequest = { showFontSizeDialog = false },
-            title = { 
-                Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_size_dialog_title), color = SettingsTheme.onSurfaceColor, fontWeight = FontWeight.Bold)
+        TerminalValueSettingDialog(
+            initialValue = fontSize.toString(),
+            title = stringResource(com.ai.assistance.operit.terminal.R.string.font_size_dialog_title),
+            label = stringResource(com.ai.assistance.operit.terminal.R.string.font_size_label),
+            hint = stringResource(com.ai.assistance.operit.terminal.R.string.font_size_invalid),
+            keyboardType = KeyboardType.Decimal,
+            validate = { input -> input.trim().toFloatOrNull()?.let { it.isFinite() && it in 12f..100f } == true },
+            onDismiss = { showFontSizeDialog = false },
+            onConfirm = { input ->
+                val value = input.trim().toFloat()
+                withContext(Dispatchers.IO) { fontConfigManager.setFontSize(value) }
+                fontSize = value
             },
-            text = { 
-                OutlinedTextField(
-                    value = fontSizeInput,
-                    onValueChange = { fontSizeInput = it },
-                    label = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_size_label), color = SettingsTheme.onSurfaceVariant) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = SettingsTheme.onSurfaceColor,
-                        unfocusedTextColor = SettingsTheme.onSurfaceColor,
-                        focusedBorderColor = SettingsTheme.primaryColor,
-                        unfocusedBorderColor = SettingsTheme.onSurfaceVariant
-                    )
-                )
+        )
+    }
+    if (showTargetFpsDialog) {
+        TerminalValueSettingDialog(
+            initialValue = targetFps.toString(),
+            title = stringResource(com.ai.assistance.operit.terminal.R.string.target_fps_dialog_title),
+            label = stringResource(com.ai.assistance.operit.terminal.R.string.target_fps_label),
+            hint = stringResource(com.ai.assistance.operit.terminal.R.string.target_fps_invalid),
+            keyboardType = KeyboardType.Number,
+            validate = { it.trim().toIntOrNull()?.let { value -> value in 15..120 } == true },
+            onDismiss = { showTargetFpsDialog = false },
+            onConfirm = { input ->
+                val value = input.trim().toInt()
+                withContext(Dispatchers.IO) { fontConfigManager.setTargetFps(value) }
+                targetFps = value
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        try {
-                            val size = fontSizeInput.toFloat().coerceIn(12f, 100f)
-                            fontConfigManager.setFontSize(size)
-                            fontSize = size
-                            showFontSizeDialog = false
-                        } catch (e: Exception) {
-                            // 忽略无效输入
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
-                ) {
-                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.confirm))
-                }
+        )
+    }
+    if (showFontPathDialog) {
+        TerminalValueSettingDialog(
+            initialValue = fontPath,
+            title = stringResource(com.ai.assistance.operit.terminal.R.string.font_path_dialog_title),
+            label = stringResource(com.ai.assistance.operit.terminal.R.string.font_path_label),
+            hint = stringResource(com.ai.assistance.operit.terminal.R.string.font_path_hint),
+            validate = { it.none(Char::isISOControl) },
+            onDismiss = { showFontPathDialog = false },
+            onConfirm = { input ->
+                withContext(Dispatchers.IO) { fontConfigManager.setFontPath(input) }
+                fontPath = fontConfigManager.getFontPath().orEmpty()
             },
-            dismissButton = {
-                OutlinedButton(
-                    onClick = { showFontSizeDialog = false }
-                ) {
-                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.cancel))
-                }
+        )
+    }
+    if (showFontNameDialog) {
+        TerminalValueSettingDialog(
+            initialValue = fontName,
+            title = stringResource(com.ai.assistance.operit.terminal.R.string.font_name_dialog_title),
+            label = stringResource(com.ai.assistance.operit.terminal.R.string.font_name_label),
+            hint = stringResource(com.ai.assistance.operit.terminal.R.string.font_name_hint),
+            validate = { it.none(Char::isISOControl) },
+            onDismiss = { showFontNameDialog = false },
+            onConfirm = { input ->
+                withContext(Dispatchers.IO) { fontConfigManager.setFontName(input) }
+                fontName = fontConfigManager.getFontName().orEmpty()
             },
-            containerColor = SettingsTheme.surfaceColor
         )
     }
 
-    // 渲染帧率设置对话框
-    if (showTargetFpsDialog) {
-        var targetFpsInput by remember { mutableStateOf(targetFps.toString()) }
-        AlertDialog(
-            onDismissRequest = { showTargetFpsDialog = false },
-            title = {
-                Text(
-                    stringResource(com.ai.assistance.operit.terminal.R.string.target_fps_dialog_title),
-                    color = SettingsTheme.onSurfaceColor,
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = targetFpsInput,
-                        onValueChange = { targetFpsInput = it },
-                        label = {
-                            Text(
-                                stringResource(com.ai.assistance.operit.terminal.R.string.target_fps_label),
-                                color = SettingsTheme.onSurfaceVariant
-                            )
-                        },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = SettingsTheme.onSurfaceColor,
-                            unfocusedTextColor = SettingsTheme.onSurfaceColor,
-                            focusedBorderColor = SettingsTheme.primaryColor,
-                            unfocusedBorderColor = SettingsTheme.onSurfaceVariant
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = stringResource(com.ai.assistance.operit.terminal.R.string.target_fps_hint),
-                        color = SettingsTheme.onSurfaceVariant,
-                        fontSize = 12.sp
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        try {
-                            val fps = targetFpsInput.toInt().coerceIn(15, 120)
-                            fontConfigManager.setTargetFps(fps)
-                            targetFps = fps
-                            showTargetFpsDialog = false
-                        } catch (e: Exception) {
-                            // 忽略无效输入
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
-                ) {
-                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.confirm))
-                }
-            },
-            dismissButton = {
-                OutlinedButton(
-                    onClick = { showTargetFpsDialog = false }
-                ) {
-                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.cancel))
-                }
-            },
-            containerColor = SettingsTheme.surfaceColor
-        )
-    }
-    
-    // 字体路径设置对话框
-    if (showFontPathDialog) {
-        var fontPathInput by remember { mutableStateOf(fontPath) }
-        AlertDialog(
-            onDismissRequest = { showFontPathDialog = false },
-            title = { 
-                Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_path_dialog_title), color = SettingsTheme.onSurfaceColor, fontWeight = FontWeight.Bold)
-            },
-            text = { 
-                Column {
-                    OutlinedTextField(
-                        value = fontPathInput,
-                        onValueChange = { fontPathInput = it },
-                        label = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_path_label), color = SettingsTheme.onSurfaceVariant) },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = SettingsTheme.onSurfaceColor,
-                            unfocusedTextColor = SettingsTheme.onSurfaceColor,
-                            focusedBorderColor = SettingsTheme.primaryColor,
-                            unfocusedBorderColor = SettingsTheme.onSurfaceVariant
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = stringResource(com.ai.assistance.operit.terminal.R.string.font_path_hint),
-                        color = SettingsTheme.onSurfaceVariant,
-                        fontSize = 12.sp
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        fontConfigManager.setFontPath(if (fontPathInput.isBlank()) null else fontPathInput)
-                        fontPath = fontPathInput
-                        showFontPathDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
-                ) {
-                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.confirm))
-                }
-            },
-            dismissButton = {
-                OutlinedButton(
-                    onClick = { showFontPathDialog = false }
-                ) {
-                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.cancel))
-                }
-            },
-            containerColor = SettingsTheme.surfaceColor
-        )
-    }
-    
-    // 系统字体名称设置对话框
-    if (showFontNameDialog) {
-        var fontNameInput by remember { mutableStateOf(fontName) }
-        AlertDialog(
-            onDismissRequest = { showFontNameDialog = false },
-            title = { 
-                Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_name_dialog_title), color = SettingsTheme.onSurfaceColor, fontWeight = FontWeight.Bold)
-            },
-            text = { 
-                Column {
-                    OutlinedTextField(
-                        value = fontNameInput,
-                        onValueChange = { fontNameInput = it },
-                        label = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_name_label), color = SettingsTheme.onSurfaceVariant) },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.font_name_placeholder), color = SettingsTheme.onSurfaceVariant.copy(alpha = 0.5f)) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = SettingsTheme.onSurfaceColor,
-                            unfocusedTextColor = SettingsTheme.onSurfaceColor,
-                            focusedBorderColor = SettingsTheme.primaryColor,
-                            unfocusedBorderColor = SettingsTheme.onSurfaceVariant
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = stringResource(com.ai.assistance.operit.terminal.R.string.font_name_hint),
-                        color = SettingsTheme.onSurfaceVariant,
-                        fontSize = 12.sp
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        fontConfigManager.setFontName(if (fontNameInput.isBlank()) null else fontNameInput)
-                        fontName = fontNameInput
-                        showFontNameDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
-                ) {
-                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.confirm))
-                }
-            },
-            dismissButton = {
-                OutlinedButton(
-                    onClick = { showFontNameDialog = false }
-                ) {
-                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.cancel))
-                }
-            },
-            containerColor = SettingsTheme.surfaceColor
-        )
-    }
-    
     if (showClearCacheDialog) {
         AlertDialog(
             onDismissRequest = { showClearCacheDialog = false },
@@ -1081,7 +973,7 @@ fun SettingsScreen(
                 Text(stringResource(com.ai.assistance.operit.terminal.R.string.reset_dialog_title), color = SettingsTheme.errorColor, fontWeight = FontWeight.Bold)
             },
             text = { 
-                Column {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text(
                         stringResource(com.ai.assistance.operit.terminal.R.string.reset_dialog_description),
                         color = SettingsTheme.onSurfaceColor,
@@ -1106,13 +998,14 @@ fun SettingsScreen(
             },
             confirmButton = {
                 Button(
+                    enabled = !isClearingCache && !isManagingFtpServer && !isUnmountingChrootMounts,
                     onClick = {
                         viewModel.clearCache()
                         showClearCacheDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.errorColor)
                 ) {
-                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.reset_confirm), color = SettingsTheme.onSurfaceColor)
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.reset_confirm), color = MaterialTheme.colorScheme.onError)
                 }
             },
             dismissButton = {
@@ -1130,12 +1023,27 @@ fun SettingsScreen(
         )
     }
 
+    if (showUnmountConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnmountConfirmDialog = false },
+            title = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.chroot_mount_unmount)) },
+            text = { Text(stringResource(com.ai.assistance.operit.terminal.R.string.chroot_unmount_confirmation)) },
+            confirmButton = {
+                TextButton(enabled = !isClearingCache && !isManagingFtpServer && !isUnmountingChrootMounts && !isInspectingChrootMounts,
+                    onClick = { viewModel.unmountChrootMounts(); showUnmountConfirmDialog = false }) {
+                    Text(stringResource(com.ai.assistance.operit.terminal.R.string.confirm), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showUnmountConfirmDialog = false }) { Text(stringResource(com.ai.assistance.operit.terminal.R.string.cancel)) } },
+        )
+    }
+
     if (showVirtualKeyboardDialog) {
         VirtualKeyboardCustomizationDialog(
             initialLayout = virtualKeyboardLayout,
             onDismiss = { showVirtualKeyboardDialog = false },
-            onConfirm = { layout ->
-                viewModel.saveVirtualKeyboardLayout(layout)
+            onConfirm = { layout, expected ->
+                viewModel.saveVirtualKeyboardLayout(layout, expected)
                 showVirtualKeyboardDialog = false
             }
         )
@@ -1154,8 +1062,8 @@ fun SettingsScreen(
                     viewModel.updateSource(pm, sourceId)
                     showSourceDialogFor = null
                 },
-                onAddCustomSource = { name, url, isHttps ->
-                    viewModel.addCustomSource(pm, name, url, isHttps)
+                onAddCustomSource = { name, url ->
+                    viewModel.addCustomSource(pm, name, url)
                 },
                 onDeleteCustomSource = { sourceId ->
                     viewModel.deleteCustomSource(pm, sourceId)
@@ -1168,6 +1076,7 @@ fun SettingsScreen(
 @Composable
 private fun SettingsItem(
     title: String,
+    enabled: Boolean = true,
     subtitle: String,
     onClick: () -> Unit,
     icon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.ChevronRight
@@ -1175,7 +1084,7 @@ private fun SettingsItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1191,170 +1100,3 @@ private fun SettingsItem(
         )
     }
 }
-
-@Composable
-private fun SourceSelectionDialog(
-    context: android.content.Context,
-    packageManager: PackageManagerType,
-    config: SourceConfig,
-    onDismiss: () -> Unit,
-    onSourceSelected: (String) -> Unit,
-    onAddCustomSource: (name: String, url: String, isHttps: Boolean) -> Unit,
-    onDeleteCustomSource: (String) -> Unit
-) {
-    var selectedId by remember { mutableStateOf(config.selectedSourceId) }
-    var showAddCustomDialog by remember { mutableStateOf(false) }
-    
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(context.getString(com.ai.assistance.operit.terminal.R.string.select_source_title, packageManager.displayName), color = SettingsTheme.onSurfaceColor)
-                IconButton(onClick = { showAddCustomDialog = true }) {
-                    Icon(Icons.Default.Add, context.getString(com.ai.assistance.operit.terminal.R.string.add), tint = SettingsTheme.primaryColor)
-                }
-            }
-        },
-        text = {
-            LazyColumn {
-                items(config.sources) { source ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { selectedId = source.id }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = selectedId == source.id,
-                            onClick = { selectedId = source.id },
-                            colors = RadioButtonDefaults.colors(selectedColor = SettingsTheme.primaryColor)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(source.name, color = SettingsTheme.onSurfaceColor)
-                            Text(
-                                source.url, 
-                                color = SettingsTheme.onSurfaceVariant,
-                                fontSize = 12.sp,
-                                maxLines = 1
-                            )
-                        }
-                        // 只有自定义源才显示删除按钮
-                        if (source.id.startsWith("custom_")) {
-                            IconButton(onClick = { onDeleteCustomSource(source.id) }) {
-                                Icon(Icons.Default.Delete, context.getString(com.ai.assistance.operit.terminal.R.string.delete_source), tint = SettingsTheme.errorColor)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onSourceSelected(selectedId) },
-                colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
-            ) {
-                Text(context.getString(com.ai.assistance.operit.terminal.R.string.confirm))
-            }
-        },
-        dismissButton = {
-            OutlinedButton(onClick = onDismiss) {
-                Text(context.getString(com.ai.assistance.operit.terminal.R.string.cancel))
-            }
-        },
-        containerColor = SettingsTheme.surfaceColor
-    )
-    
-    // 添加自定义源弹窗
-    if (showAddCustomDialog) {
-        AddCustomSourceDialog(
-            context = context,
-            packageManager = packageManager,
-            onDismiss = { showAddCustomDialog = false },
-            onConfirm = { name, url, isHttps ->
-                onAddCustomSource(name, url, isHttps)
-                showAddCustomDialog = false
-            }
-        )
-    }
-}
-
-@Composable
-private fun AddCustomSourceDialog(
-    context: android.content.Context,
-    packageManager: PackageManagerType,
-    onDismiss: () -> Unit,
-    onConfirm: (name: String, url: String, isHttps: Boolean) -> Unit
-) {
-    var name by remember { mutableStateOf("") }
-    var url by remember { mutableStateOf("") }
-    var isHttps by remember { mutableStateOf(true) }
-    
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(context.getString(com.ai.assistance.operit.terminal.R.string.add_custom_source_title, packageManager.displayName), color = SettingsTheme.onSurfaceColor) },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text(context.getString(com.ai.assistance.operit.terminal.R.string.source_name_label)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = SettingsTheme.primaryColor,
-                        focusedLabelColor = SettingsTheme.primaryColor
-                    )
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    label = { Text(context.getString(com.ai.assistance.operit.terminal.R.string.source_url_label)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = SettingsTheme.primaryColor,
-                        focusedLabelColor = SettingsTheme.primaryColor
-                    )
-                )
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = isHttps,
-                        onCheckedChange = { isHttps = it },
-                        colors = CheckboxDefaults.colors(checkedColor = SettingsTheme.primaryColor)
-                    )
-                    Text("HTTPS", color = SettingsTheme.onSurfaceColor)
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { 
-                    if (name.isNotBlank() && url.isNotBlank()) {
-                        onConfirm(name, url, isHttps)
-                    }
-                },
-                enabled = name.isNotBlank() && url.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
-            ) {
-                Text(context.getString(com.ai.assistance.operit.terminal.R.string.add))
-            }
-        },
-        dismissButton = {
-            OutlinedButton(onClick = onDismiss) {
-                Text(context.getString(com.ai.assistance.operit.terminal.R.string.cancel))
-            }
-        },
-        containerColor = SettingsTheme.surfaceColor
-    )
-} 

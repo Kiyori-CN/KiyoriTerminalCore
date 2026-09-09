@@ -1,9 +1,10 @@
 package com.ai.assistance.operit.terminal.utils
 
 import android.content.Context
-import androidx.core.content.edit
 import org.json.JSONArray
 import org.json.JSONObject
+
+internal class VirtualKeyboardConflictException : IllegalStateException("Virtual keyboard layout changed while editing")
 
 enum class VirtualKeyAction(val persistedValue: String) {
     SEND_TEXT("send_text"),
@@ -45,12 +46,24 @@ class VirtualKeyboardConfigManager private constructor(context: Context) {
         return runCatching { parseLayout(rawLayout) }.getOrElse { defaultLayout() }
     }
 
-    fun saveLayout(layout: VirtualKeyboardLayoutConfig) {
-        prefs.edit {putString(PREF_KEY_VIRTUAL_KEYBOARD_LAYOUT, serializeLayout(layout))}
+    fun saveLayout(layout: VirtualKeyboardLayoutConfig) = saveLayout(layout, null)
+
+    @Synchronized
+    internal fun saveLayout(layout: VirtualKeyboardLayoutConfig, expected: VirtualKeyboardLayoutConfig?) {
+        if (expected != null) {
+            // 写入前直接解析原配置，损坏的数据不能当默认布局覆盖。
+            val raw = prefs.getString(PREF_KEY_VIRTUAL_KEYBOARD_LAYOUT, null)
+            val current = if (raw == null) defaultLayout() else parseLayout(raw)
+            if (current != expected) throw VirtualKeyboardConflictException()
+        }
+        check(prefs.edit().putString(PREF_KEY_VIRTUAL_KEYBOARD_LAYOUT, serializeLayout(layout)).commit()) {
+            "Unable to save virtual keyboard layout"
+        }
     }
 
+    @Synchronized
     fun resetToDefault() {
-        prefs.edit {remove(PREF_KEY_VIRTUAL_KEYBOARD_LAYOUT)}
+        check(prefs.edit().remove(PREF_KEY_VIRTUAL_KEYBOARD_LAYOUT).commit()) { "Unable to reset keyboard layout" }
     }
 
     private fun parseLayout(rawLayout: String): VirtualKeyboardLayoutConfig {

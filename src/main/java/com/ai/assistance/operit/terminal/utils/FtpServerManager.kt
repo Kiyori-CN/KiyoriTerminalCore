@@ -3,6 +3,8 @@ package com.ai.assistance.operit.terminal.utils
 import android.content.Context
 import android.content.res.Resources
 import android.util.Log
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.apache.ftpserver.FtpServer
@@ -47,8 +49,9 @@ class FtpServerManager private constructor(
         }
     }
     
-    private var ftpServer: FtpServer? = null
-    private var activePassword: String? = null
+    private val lifecycleMutex = Mutex()
+    @Volatile private var ftpServer: FtpServer? = null
+    @Volatile private var activePassword: String? = null
     private val usrDir = File(filesDir, "usr")
     
     private fun getUbuntuRootPath(): String {
@@ -58,10 +61,14 @@ class FtpServerManager private constructor(
     }
     
     suspend fun startFtpServer(): Boolean = withContext(Dispatchers.IO) {
-        try {
+        lifecycleMutex.withLock { startServerInternal() }
+    }
+
+    private fun startServerInternal(): Boolean {
+        return try {
             if (ftpServer?.isStopped == false) {
                 Log.w(TAG, "FTP服务器已在运行")
-                return@withContext true
+                return true
             }
             
             val ubuntuRootPath = getUbuntuRootPath()
@@ -69,7 +76,7 @@ class FtpServerManager private constructor(
             
             if (!ubuntuRoot.exists()) {
                 Log.e(TAG, "Ubuntu环境未初始化，无法启动FTP服务器")
-                return@withContext false
+                return false
             }
             
             val password = generatePassword()
@@ -121,7 +128,18 @@ class FtpServerManager private constructor(
     }
     
     suspend fun stopFtpServer(): Boolean = withContext(Dispatchers.IO) {
-        try {
+        lifecycleMutex.withLock { stopServerInternal() }
+    }
+
+    internal suspend fun <T> withStoppedServer(block: suspend () -> T): T = withContext(Dispatchers.IO) {
+        lifecycleMutex.withLock {
+            check(stopServerInternal()) { "Unable to stop FTP server; environment files have not been removed" }
+            block()
+        }
+    }
+
+    private fun stopServerInternal(): Boolean {
+        return try {
             ftpServer?.stop()
             ftpServer = null
             activePassword = null

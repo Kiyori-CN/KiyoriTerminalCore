@@ -18,7 +18,11 @@ import com.ai.assistance.operit.terminal.utils.VirtualKeyboardLayoutConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 class SettingsViewModel(
@@ -29,7 +33,9 @@ class SettingsViewModel(
     private val terminalManagerRef by lazy { terminalManager ?: TerminalManager.getInstance(application) }
     private val ftpServerManager = FtpServerManager.getInstance(application)
     private val sourceManager = SourceManager(application)
+    private val sourceMutex = Mutex()
     private val sshConfigManager = SSHConfigManager(application)
+    private val sshConfigMutex = Mutex()
     private val virtualKeyboardConfigManager = VirtualKeyboardConfigManager.getInstance(application)
     
     // SharedPreferences for shared tmp setting
@@ -60,6 +66,8 @@ class SettingsViewModel(
     // 源管理相关状态
     private val _sourceConfigs = MutableStateFlow<Map<PackageManagerType, SourceConfig>>(emptyMap())
     val sourceConfigs = _sourceConfigs.asStateFlow()
+    private val _sourceLoadError = MutableStateFlow(false)
+    val sourceLoadError = _sourceLoadError.asStateFlow()
     
     // SSH配置相关状态（单一配置）
     private val _sshConfig = MutableStateFlow<SSHConfig?>(null)
@@ -67,6 +75,11 @@ class SettingsViewModel(
     
     private val _sshEnabled = MutableStateFlow(false)
     val sshEnabled = _sshEnabled.asStateFlow()
+    private val _sshLoadError = MutableStateFlow(false)
+    val sshLoadError = _sshLoadError.asStateFlow()
+    private val _sshBusy = MutableStateFlow(false)
+    val sshBusy = _sshBusy.asStateFlow()
+    val activeEnvironmentType get() = terminalManagerRef.activeEnvironmentType
 
     private val _showSshToolsMissingDialog = MutableStateFlow(false)
     val showSshToolsMissingDialog = _showSshToolsMissingDialog.asStateFlow()
@@ -135,7 +148,8 @@ class SettingsViewModel(
     }
 
     private fun loadSourceConfigs() {
-        _sourceConfigs.value = mapOf(
+        try {
+            _sourceConfigs.value = mapOf(
             PackageManagerType.APT to SourceConfig(
                 PackageManagerType.APT,
                 sourceManager.getSelectedSourceId(PackageManagerType.APT),
@@ -157,64 +171,47 @@ class SettingsViewModel(
                 sourceManager.rustSources
             )
         )
+            _sourceLoadError.value = false
+        } catch (error: Exception) {
+            android.util.Log.e("SettingsViewModel", "Unable to load mirror source configuration (${error.javaClass.simpleName})")
+            _sourceConfigs.value = emptyMap()
+            _sourceLoadError.value = true
+        }
     }
 
-    fun updateSource(pm: PackageManagerType, sourceId: String) {
-        viewModelScope.launch {
-            // 1. 保存设置
+    fun reloadSourceConfigs() {
+        viewModelScope.launch { sourceMutex.withLock { withContext(Dispatchers.IO) { loadSourceConfigs() } } }
+    }
+
+    suspend fun updateSource(pm: PackageManagerType, sourceId: String) = sourceMutex.withLock {
+        withContext(Dispatchers.IO) {
+            // 本地启动配置和安装入口读取此选择；不向未知交互会话派发命令。
             sourceManager.setSelectedSourceId(pm, sourceId)
-            
-            // 2. 重新加载配置以更新UI
             loadSourceConfigs()
+        }
+    }
 
-            // 3. 应用更改
-            val source = when (pm) {
-                PackageManagerType.APT -> sourceManager.aptSources.find { it.id == sourceId }
-                PackageManagerType.PIP -> sourceManager.pipSources.find { it.id == sourceId }
-                PackageManagerType.NPM -> sourceManager.npmSources.find { it.id == sourceId }
-                PackageManagerType.RUST -> sourceManager.rustSources.find { it.id == sourceId }
-            }
-            source?.let {
-                val command = when (pm) {
-                    PackageManagerType.APT -> sourceManager.getAptSourceChangeCommand(it)
-                    PackageManagerType.PIP -> sourceManager.getPipSourceChangeCommand(it)
-                    PackageManagerType.NPM -> sourceManager.getNpmSourceChangeCommand(it)
-                    PackageManagerType.RUST -> {
-                        // Rust源的更改需要通过环境变量，这里只是提示用户
-                        "echo 'Rust镜像源已更新为: ${it.name}. 下次安装Rust时将使用此源。'"
-                    }
-                }
-                // 在默认会话中执行命令
-                terminalManager?.sendCommandToSession("default", command)
-            }
+    suspend fun addCustomSource(pm: PackageManagerType, name: String, url: String) = sourceMutex.withLock {
+        withContext(Dispatchers.IO) {
+            val id = "custom_${pm.name.lowercase()}_${java.util.UUID.randomUUID()}"
+            val normalizedUrl = url.trim()
+            val source = MirrorSource(id, name.trim(), normalizedUrl, normalizedUrl.startsWith("https://", ignoreCase = true))
+            sourceManager.saveCustomSource(pm, source)
+            loadSourceConfigs()
         }
     }
-    
-    fun addCustomSource(pm: PackageManagerType, name: String, url: String, isHttps: Boolean) {
-        // 生成唯一ID：使用时间戳 + URL的哈希
-        val id = "custom_${pm.name.lowercase()}_${System.currentTimeMillis()}"
-        val source = MirrorSource(id, name, url, isHttps)
-        sourceManager.saveCustomSource(pm, source)
-        loadSourceConfigs()
-    }
-    
-    fun deleteCustomSource(pm: PackageManagerType, sourceId: String) {
-        val wasSelected = sourceManager.getSelectedSourceId(pm) == sourceId
-        sourceManager.deleteCustomSource(pm, sourceId)
-        // SourceManager commits the selected-ID change atomically with the list deletion.
-        // Apply the new built-in source only after that invariant is durable.
-        if (wasSelected) {
-            updateSource(pm, sourceManager.getSelectedSourceId(pm))
+
+    suspend fun deleteCustomSource(pm: PackageManagerType, sourceId: String) = sourceMutex.withLock {
+        withContext(Dispatchers.IO) {
+            sourceManager.deleteCustomSource(pm, sourceId)
+            loadSourceConfigs()
         }
-        loadSourceConfigs()
     }
 
     fun getCacheSize() {
-        // 如果已经有正在运行的计算任务，先取消它
-        cacheSizeCalculationJob?.cancel()
-        
+        if (_isCalculatingCache.value || _isClearingCache.value) return
+        _isCalculatingCache.value = true
         cacheSizeCalculationJob = viewModelScope.launch {
-            _isCalculatingCache.value = true
             _cacheSize.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.cache_calculating)
             try {
                 // 调用新的 getCacheSize，并传入一个更新UI的回调
@@ -237,30 +234,21 @@ class SettingsViewModel(
     }
 
     fun clearCache() {
+        if (_isClearingCache.value || _isManagingFtpServer.value || _isUnmountingChrootMounts.value) return
+        _isClearingCache.value = true
         viewModelScope.launch {
-            _isClearingCache.value = true
             
-            // 先停止正在进行的缓存计算
-            val jobToCancel = cacheSizeCalculationJob
-            if (jobToCancel?.isActive == true) {
-                jobToCancel.cancel()
-                try {
-                    jobToCancel.join() // 等待任务完成
-                } catch (e: Exception) {
-                    // 忽略join可能抛出的异常，因为我们就是要取消它
-                }
-            }
-            
-            _cacheSize.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.environment_resetting)
             try {
-                // 在清理缓存前停止FTP服务器
-                if (ftpServerManager.isFtpServerRunning()) {
-                    ftpServerManager.stopFtpServer()
+                cacheSizeCalculationJob?.cancel()
+                cacheSizeCalculationJob?.join()
+                _cacheSize.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.environment_resetting)
+                ftpServerManager.withStoppedServer {
                     updateFtpServerStatus()
+                    cacheManager.clearCache(terminalManagerRef)
                 }
-                
-                cacheManager.clearCache(terminalManagerRef)
                 _cacheSize.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.environment_reset_complete)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 _cacheSize.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.environment_reset_failed, e.message ?: "")
             } finally {
@@ -270,8 +258,9 @@ class SettingsViewModel(
     }
 
     fun startFtpServer() {
+        if (_isManagingFtpServer.value || _isClearingCache.value || _isUnmountingChrootMounts.value) return
+        _isManagingFtpServer.value = true
         viewModelScope.launch {
-            _isManagingFtpServer.value = true
             _ftpServerStatus.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.ftp_server_starting)
             try {
                 val success = ftpServerManager.startFtpServer()
@@ -281,6 +270,8 @@ class SettingsViewModel(
                 } else {
                     _ftpServerStatus.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.ftp_server_start_failed_env)
                 }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 _ftpServerStatus.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.ftp_server_start_failed, e.message ?: "")
             } finally {
@@ -290,8 +281,9 @@ class SettingsViewModel(
     }
     
     fun stopFtpServer() {
+        if (_isManagingFtpServer.value || _isClearingCache.value || _isUnmountingChrootMounts.value) return
+        _isManagingFtpServer.value = true
         viewModelScope.launch {
-            _isManagingFtpServer.value = true
             _ftpServerStatus.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.ftp_server_stopping_progress)
             try {
                 val success = ftpServerManager.stopFtpServer()
@@ -301,6 +293,8 @@ class SettingsViewModel(
                 } else {
                     _ftpServerStatus.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.ftp_server_stop_failed)
                 }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 _ftpServerStatus.value = getApplication<Application>().getString(com.ai.assistance.operit.terminal.R.string.ftp_server_stop_failed_with_error, e.message ?: "")
             } finally {
@@ -316,9 +310,15 @@ class SettingsViewModel(
     
     // ==================== SSH 配置管理 ====================
     
-    private fun loadSSHConfigs() {
+    fun loadSSHConfigs() {
         viewModelScope.launch {
-            _sshConfig.value = sshConfigManager.getConfig()
+            sshConfigMutex.withLock {
+                try {
+                    _sshConfig.value = sshConfigManager.getConfig()
+                    _sshLoadError.value = false
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { _sshLoadError.value = true }
+            }
         }
     }
     
@@ -326,35 +326,36 @@ class SettingsViewModel(
         _sshEnabled.value = sshConfigManager.isEnabled()
     }
     
-    fun saveSSHConfig(config: SSHConfig) {
-        viewModelScope.launch {
+    suspend fun saveSSHConfig(config: SSHConfig) {
+        sshConfigMutex.withLock {
             sshConfigManager.saveConfig(config)
-            loadSSHConfigs()
+            _sshConfig.value = config
+            _sshLoadError.value = false
         }
     }
     
-    fun deleteSSHConfig() {
-        viewModelScope.launch {
+    suspend fun deleteSSHConfig() {
+        sshConfigMutex.withLock {
             sshConfigManager.deleteConfig()
-            // 删除配置时也禁用 SSH
-            sshConfigManager.setEnabled(false)
-            loadSSHConfigs()
-            loadSSHEnabled()
+            _sshConfig.value = null
+            _sshEnabled.value = false
+            _sshLoadError.value = false
         }
     }
     
-    fun setSSHEnabled(enabled: Boolean) {
+    suspend fun setSSHEnabled(enabled: Boolean) = sshConfigMutex.withLock {
         if (enabled) {
+            checkNotNull(sshConfigManager.getConfig()) { "SSH connection configuration is missing" }
             if (!areSshToolsInstalled()) {
                 _showSshToolsMissingDialog.value = true
-                return
+                return@withLock
             }
             
             // 检查是否启用了反向隧道且是否安装了openssh-server
             val config = _sshConfig.value
             if (config != null && config.enableReverseTunnel && !isOpensshServerInstalled()) {
                 _showOpensshMissingDialog.value = true
-                return
+                return@withLock
             }
             
             sshConfigManager.setEnabled(true)
@@ -363,6 +364,13 @@ class SettingsViewModel(
             sshConfigManager.setEnabled(false)
             loadSSHEnabled()
         }
+    }
+
+    suspend fun applyConnectionSettings() = sshConfigMutex.withLock {
+        check(!_isClearingCache.value && !_isUnmountingChrootMounts.value) { "Environment maintenance is in progress" }
+        _sshBusy.value = true
+        try { terminalManagerRef.applyConnectionSettings() }
+        finally { _sshBusy.value = false }
     }
     
     // ==================== Shared TMP 设置管理 ====================
@@ -420,12 +428,16 @@ class SettingsViewModel(
     }
 
     fun unmountChrootMounts() {
+        if (_isUnmountingChrootMounts.value || _isClearingCache.value || _isManagingFtpServer.value || _isInspectingChrootMounts.value) return
+        _isUnmountingChrootMounts.value = true
         viewModelScope.launch {
-            _isUnmountingChrootMounts.value = true
             _chrootMountStatus.value = getApplication<Application>()
                 .getString(com.ai.assistance.operit.terminal.R.string.chroot_mount_status_unmounting)
             try {
-                val removedCount = cacheManager.unmountUbuntuMounts(terminalManagerRef)
+                val removedCount = ftpServerManager.withStoppedServer {
+                    updateFtpServerStatus()
+                    cacheManager.unmountUbuntuMounts(terminalManagerRef)
+                }
                 val result = cacheManager.inspectUbuntuMounts()
                 _chrootMountStatus.value = if (removedCount > 0) {
                     getApplication<Application>().resources.getQuantityString(
@@ -472,8 +484,8 @@ class SettingsViewModel(
         _virtualKeyboardLayout.value = virtualKeyboardConfigManager.loadLayout()
     }
 
-    fun saveVirtualKeyboardLayout(layout: VirtualKeyboardLayoutConfig) {
-        virtualKeyboardConfigManager.saveLayout(layout)
+    suspend fun saveVirtualKeyboardLayout(layout: VirtualKeyboardLayoutConfig, expected: VirtualKeyboardLayoutConfig) {
+        withContext(Dispatchers.IO) { virtualKeyboardConfigManager.saveLayout(layout, expected) }
         loadVirtualKeyboardLayout()
     }
 } 

@@ -179,8 +179,8 @@
     
     <!-- SSH Settings -->
     <string name="ssh_enable_title">Enable SSH Connection</string>
-    <string name="ssh_use_remote_desc">Using remote SSH terminal</string>
-    <string name="ssh_use_local_desc">Using local terminal</string>
+    <string name="ssh_use_remote_desc">Use remote SSH for the next connection</string>
+    <string name="ssh_use_local_desc">Use the local environment for the next connection</string>
     <string name="ssh_reverse_mount_enabled"> Reverse Mount Enabled</string>
     <string name="ssh_reverse_mount_desc">Remote can access local files via ~/storage and ~/sdcard</string>
     <string name="ssh_config_required">Please configure SSH connection first</string>
@@ -203,17 +203,17 @@
     <string name="font_not_set">Not set (using default font)</string>
     <string name="font_reset_default">Reset to Default</string>
     <string name="font_size_dialog_title">Set Font Size</string>
-    <string name="font_size_label">Font Size (sp)</string>
+    <string name="font_size_label">Font Size (px)</string>
     <string name="target_fps_dialog_title">Set Render Frame Rate</string>
     <string name="target_fps_label">Target Frame Rate (FPS)</string>
     <string name="target_fps_hint">Range: 15–120. Recommended: 30–60. Higher values are smoother but use more power.</string>
     <string name="font_path_dialog_title">Set Font File Path</string>
     <string name="font_path_label">Font File Path</string>
-    <string name="font_path_hint">Leave empty to use default font</string>
+    <string name="font_path_hint">Enter the absolute path to a valid font file readable by Android. Leave empty to use the configured system family or bundled font.</string>
     <string name="font_name_dialog_title">Set System Font Name</string>
     <string name="font_name_label">System Font Name</string>
     <string name="font_name_placeholder">e.g.: monospace, serif, sans-serif</string>
-    <string name="font_name_hint">Leave empty to use default font. Common values: monospace, serif, sans-serif</string>
+    <string name="font_name_hint">A configured file takes priority. Common families: monospace, serif, sans-serif. Android resolves the name and may use its default for unsupported families.</string>
 
     <!-- Virtual Keyboard Settings -->
     <string name="virtual_keyboard_settings_title">Virtual Keyboard Settings</string>
@@ -245,4 +245,41 @@
     <string name="terminal_accessibility_session_tab">Session "%1$s"</string>
     <string name="terminal_accessibility_current_session_tab">Current session "%1$s"</string>
     <string name="terminal_accessibility_close_session_tab">Close session "%1$s"</string>
-</resources> 
+    <string name="ssh_exit_ends_session">Exiting SSH ends the remote session. Create or switch to a local session to use the local terminal.</string>
+    <string name="ssh_config_save_failed">Could not save. Your input is preserved; please try again.</string>
+    <string name="ssh_config_delete_failed">Could not delete the configuration. Please try again.</string>
+    <string name="ssh_config_saving">Saving…</string>
+    <string name="ssh_host_invalid">Enter a host name or IP address without a scheme, path, or whitespace.</string>
+    <string name="ssh_username_invalid">Enter a username without whitespace or control characters.</string>
+    <string name="ssh_password_invalid">Enter a valid password.</string>
+    <string name="ssh_private_key_invalid">Enter a valid private key path.</string>
+    <string name="ssh_port_invalid">Enter an integer port from 1 to 65535.</string>
+    <string name="ssh_keep_alive_invalid">Enter a whole number of seconds from 1 to 2147483.</string>
+    <string name="ssh_local_password_invalid">The local SSH password must contain at least 16 characters.</string>
+    <string name="font_size_invalid">Enter a font size from 12 to 100; decimals are allowed</string>
+    <string name="target_fps_invalid">Enter a whole-number frame rate from 15 to 120</string>
+    <string name="source_application_timing">APT, Pip/Uv and NPM mirrors apply to new local terminal sessions; the Rust mirror applies to future installations. Saving does not run session commands or change remote SSH configuration.</string>
+    <string name="source_operation_failed">Could not save mirror settings. Your input is retained; please retry.</string>
+    <string name="source_load_failed">Could not read mirror settings. Retry to reload; the original configuration has not been overwritten.</string>
+    <string name="source_delete_confirmation">Delete “%1$s”? If selected, the built-in default will be chosen and used by new local sessions.</string>
+    <string name="source_url_requirements">Use a complete HTTP or HTTPS URL without whitespace or control characters. The URL determines its protocol; credentials and query parameters are hidden in the list.</string>
+    <string name="chroot_unmount_confirmation">Stop all terminal sessions, running commands and the FTP server, then unmount the local environment mount points? Environment files will not be deleted.</string>
+    <string name="terminal_settings_save_failed">Could not save. Check your input, file and access permissions, then retry. Your input is retained.</string>
+    <string name="terminal_font_load_failed">The selected font could not be loaded. A substitute is shown; check font settings.</string>
+    <string name="terminal_keyboard_changed">The keyboard configuration changed elsewhere. Your draft is retained; close and reopen the editor to review the latest configuration.</string>
+    <string name="ssh_active_remote">Current environment: remote SSH</string>
+    <string name="ssh_active_local">Current environment: local</string>
+    <string name="ssh_active_none">Current environment: not connected</string>
+    <string name="ssh_saved_connection_note">Saving settings or changing this switch does not interrupt the current environment. Apply connection settings to reconnect; existing sessions keep their original connection.</string>
+    <string name="ssh_load_failed">Unable to read SSH configuration. Reload it, or explicitly remove it before configuring a new connection.</string>
+    <string name="ssh_reload_configuration">Reload configuration</string>
+    <string name="ssh_remove_unreadable">Remove unreadable configuration</string>
+    <string name="ssh_apply_connection">Apply connection settings</string>
+    <string name="ssh_apply_confirmation">Stop all terminal sessions, running commands and the local SSH service, then create a session using the saved settings? A failed connection stays failed without switching to another environment.</string>
+    <string name="ssh_delete_connection_note">Delete the saved SSH configuration and disable SSH for the next connection? Current remote sessions keep their original connection until closed or connection settings are applied to return to local.</string>
+    <string name="ssh_connection_action_failed">Operation failed. Check the connection settings, network and environment before retrying. No automatic environment switch was performed.</string>
+    <string name="ssh_confirm_action">Confirm</string>
+    <string name="terminal_action_failed">The terminal operation could not be confirmed. Check the session and connection before repeating a submitted command. Unsent input is preserved.</string>
+    <string name="terminal_initial_session_failed">Terminal preparation failed. Check storage space, environment files and connection settings before trying again.</string>
+    <string name="terminal_initial_session_retry">Retry preparation</string>
+</resources>

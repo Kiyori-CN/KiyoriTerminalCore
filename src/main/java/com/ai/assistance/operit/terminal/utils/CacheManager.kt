@@ -86,17 +86,12 @@ class CacheManager(private val context: Context) {
     }
 
     private fun readMountPoints(): List<String> {
-        val candidates = listOf("/proc/self/mounts", "/proc/mounts")
-        val mountsFile = candidates.firstOrNull { File(it).canRead() } ?: return emptyList()
-        return try {
-            File(mountsFile).readLines()
-                .mapNotNull { line ->
-                    val parts = line.split(' ')
-                    val rawMountPoint = parts.getOrNull(1) ?: return@mapNotNull null
-                    decodeProcMountField(rawMountPoint)
-                }
-        } catch (_: Exception) {
-            emptyList()
+        val mountsFile = listOf("/proc/self/mounts", "/proc/mounts").firstOrNull { File(it).canRead() }
+            ?: throw IOException("Unable to inspect active mounts")
+        return File(mountsFile).readLines().filter(String::isNotBlank).map { line ->
+            val rawMountPoint = line.split(' ').getOrNull(1)?.takeIf(String::isNotBlank)
+                ?: throw IOException("Invalid mount table entry")
+            decodeProcMountField(rawMountPoint)
         }
     }
 
@@ -185,63 +180,16 @@ class CacheManager(private val context: Context) {
     }
 
     private fun deleteRecursivelyNoFollow(dir: File) {
-        if (!dir.exists()) return
         ensureSafeDeleteTarget(dir)
-        Log.d(TAG, "Reset: deleting directory tree (no-follow): ${dir.absolutePath}")
-        val root = dir.toPath()
-        try {
-            Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
-
-                override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
-                    return try {
-                        if (Files.isSymbolicLink(dir)) {
-                            FileVisitResult.SKIP_SUBTREE
-                        } else {
-                            FileVisitResult.CONTINUE
-                        }
-                    } catch (_: Exception) {
-                        FileVisitResult.CONTINUE
-                    }
-                }
-
-                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-                    try {
-                        Files.deleteIfExists(file)
-                    } catch (_: Exception) {
-                    }
-                    return FileVisitResult.CONTINUE
-                }
-
-                override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
-                    try {
-                        Files.deleteIfExists(dir)
-                    } catch (_: Exception) {
-                    }
-                    return FileVisitResult.CONTINUE
-                }
-
-                override fun visitFileFailed(file: Path, exc: IOException?): FileVisitResult {
-                    try {
-                        Files.deleteIfExists(file)
-                    } catch (_: Exception) {
-                    }
-                    return FileVisitResult.CONTINUE
-                }
-            })
-        } catch (e: Exception) {
-            Log.w(TAG, "Reset: failed to delete directory tree (no-follow): ${dir.absolutePath}", e)
-        }
+        deleteTerminalEnvironmentTree(dir.toPath())
     }
 
     private fun deleteBinLinks() {
         if (!binDir.exists()) return
-        binDir.listFiles()?.forEach { file ->
-            if (isSymbolicLink(file)) {
-                try {
-                    Files.deleteIfExists(file.toPath())
-                } catch (_: Exception) {
-                }
-            }
+        ensureSafeDeleteTarget(binDir)
+        val entries = binDir.listFiles() ?: throw IOException("Unable to list terminal binary links")
+        entries.forEach { file ->
+            if (Files.isSymbolicLink(file.toPath())) Files.delete(file.toPath())
         }
     }
 
@@ -263,18 +211,17 @@ class CacheManager(private val context: Context) {
     suspend fun unmountUbuntuMounts(
         terminalManager: com.ai.assistance.operit.terminal.TerminalManager? = null
     ): Int = withContext(Dispatchers.IO) {
+        val manager = requireNotNull(terminalManager) { "Terminal manager is required for maintenance" }
+        manager.withEnvironmentMaintenance {
         val ubuntuPath = getUbuntuRootfsDir()
         Log.w(TAG, "Unmount mounts: start under ${ubuntuPath.absolutePath}")
-
-        terminalManager?.prepareForMaintenance()
-        kotlinx.coroutines.delay(1000)
 
         val before = getMountPointsUnder(ubuntuPath)
             .distinct()
             .sorted()
         if (before.isEmpty()) {
             Log.d(TAG, "Unmount mounts: no active mount points under ${ubuntuPath.absolutePath}")
-            return@withContext 0
+            return@withEnvironmentMaintenance 0
         }
 
         before.sortedByDescending { it.length }.forEach { mp ->
@@ -294,6 +241,7 @@ class CacheManager(private val context: Context) {
 
         Log.w(TAG, "Unmount mounts: completed, removed ${before.size} mount points")
         before.size
+        }
     }
 
     suspend fun getCacheSize(onProgress: (bytes: Long) -> Unit): Long = withContext(Dispatchers.IO) {
@@ -418,14 +366,8 @@ class CacheManager(private val context: Context) {
     }
 
     suspend fun clearCache(terminalManager: com.ai.assistance.operit.terminal.TerminalManager? = null) = withContext(Dispatchers.IO) {
-        Log.w(TAG, "Reset: start. filesDir=${filesDir.absolutePath}")
-        // 首先停止所有终端会话
-        Log.d(TAG, "Reset: stopping terminal sessions...")
-        terminalManager?.prepareForMaintenance()
-
-        // 等待一下确保进程完全停止
-        kotlinx.coroutines.delay(1000)
-
+        val manager = requireNotNull(terminalManager) { "Terminal manager is required for maintenance" }
+        manager.withEnvironmentMaintenance {
         val prootDistroPath = File(usrDir, "var/lib/proot-distro")
         val ubuntuPath = File(prootDistroPath, "installed-rootfs/ubuntu")
         Log.d(TAG, "Reset: ubuntuPath=${ubuntuPath.absolutePath}")
@@ -452,13 +394,11 @@ class CacheManager(private val context: Context) {
 
         filesToClean.forEach { fileName ->
             val file = File(filesDir, fileName)
-            if (file.exists()) {
-                Log.d(TAG, "Reset: deleting file ${file.absolutePath}")
-                file.delete()
-            }
+            Files.deleteIfExists(file.toPath())
         }
 
         Log.w(TAG, "Reset: completed")
+        }
     }
 
     fun formatSize(size: Long): String {

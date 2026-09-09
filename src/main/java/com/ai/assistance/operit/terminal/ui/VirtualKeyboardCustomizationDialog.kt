@@ -18,6 +18,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import android.util.Log
+import androidx.compose.material3.MaterialTheme
+import com.ai.assistance.operit.terminal.utils.VirtualKeyboardConflictException
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,10 +45,13 @@ import com.ai.assistance.operit.terminal.utils.VirtualKeyboardLayoutConfig
 fun VirtualKeyboardCustomizationDialog(
     initialLayout: VirtualKeyboardLayoutConfig,
     onDismiss: () -> Unit,
-    onConfirm: (VirtualKeyboardLayoutConfig) -> Unit
+    onConfirm: suspend (VirtualKeyboardLayoutConfig, VirtualKeyboardLayoutConfig) -> Unit
 ) {
-    val context = LocalContext.current
-    var draftButtons by remember(initialLayout) { mutableStateOf(initialLayout.rows.flatten()) }
+    val openedLayout = remember { initialLayout }
+    var draftButtons by remember { mutableStateOf(openedLayout.rows.flatten()) }
+    var saving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<Int?>(null) }
+    val scope = rememberCoroutineScope()
 
     fun updateButton(index: Int, block: (VirtualKeyboardButtonConfig) -> VirtualKeyboardButtonConfig) {
         val current = draftButtons.toMutableList()
@@ -51,7 +60,7 @@ fun VirtualKeyboardCustomizationDialog(
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!saving) onDismiss() },
         title = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -59,10 +68,12 @@ fun VirtualKeyboardCustomizationDialog(
             ) {
                 Text(
                     text = stringResource(R.string.virtual_keyboard_dialog_title),
+                    modifier = Modifier.weight(1f),
                     color = SettingsTheme.onSurfaceColor,
                     fontWeight = FontWeight.Bold
                 )
                 TextButton(
+                    enabled = !saving,
                     onClick = {
                         draftButtons = VirtualKeyboardConfigManager.defaultLayout().rows.flatten()
                     }
@@ -78,6 +89,7 @@ fun VirtualKeyboardCustomizationDialog(
                     .heightIn(max = 460.dp)
                     .verticalScroll(rememberScrollState())
             ) {
+                saveError?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
                 Text(
                     text = stringResource(R.string.virtual_keyboard_value_hint),
                     color = SettingsTheme.onSurfaceVariant,
@@ -105,6 +117,7 @@ fun VirtualKeyboardCustomizationDialog(
                         VirtualKeyboardKeyEditor(
                             keyIndex = columnIndex + 1,
                             keyConfig = key,
+                            enabled = !saving,
                             onLabelChange = { value ->
                                 updateButton(index) { it.copy(label = value) }
                             },
@@ -113,10 +126,8 @@ fun VirtualKeyboardCustomizationDialog(
                             },
                             onActionChange = { action ->
                                 updateButton(index) { current ->
-                                    current.copy(
-                                        action = action,
-                                        value = if (action == VirtualKeyAction.SEND_TEXT) current.value else ""
-                                    )
+                                    // 非发送动作忽略 value，但切回发送动作时保留用户草稿。
+                                    current.copy(action = action)
                                 }
                             }
                         )
@@ -128,20 +139,28 @@ fun VirtualKeyboardCustomizationDialog(
         },
         confirmButton = {
             Button(
+                enabled = !saving,
                 onClick = {
-                    onConfirm(
-                        VirtualKeyboardLayoutConfig(
-                            rows = draftButtons.chunked(VirtualKeyboardLayoutConfig.COLUMN_COUNT)
-                        )
-                    )
+                    if (!saving) {
+                        saving = true
+                        saveError = null
+                        val submitted = VirtualKeyboardLayoutConfig(rows = draftButtons.chunked(VirtualKeyboardLayoutConfig.COLUMN_COUNT))
+                        scope.launch {
+                            try { onConfirm(submitted, openedLayout) }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (_: VirtualKeyboardConflictException) { saveError = R.string.terminal_keyboard_changed }
+                            catch (error: Exception) {
+                                Log.e("VirtualKeyboardDialog", "Unable to save keyboard (${error.javaClass.simpleName})")
+                                saveError = R.string.terminal_settings_save_failed
+                            } finally { saving = false }
+                        }
+                    }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = SettingsTheme.primaryColor)
-            ) {
-                Text(stringResource(R.string.confirm))
-            }
+            ) { Text(stringResource(if (saving) R.string.ssh_config_saving else R.string.confirm)) }
         },
         dismissButton = {
-            OutlinedButton(onClick = onDismiss) {
+            OutlinedButton(enabled = !saving, onClick = onDismiss) {
                 Text(stringResource(R.string.cancel))
             }
         },
@@ -153,6 +172,7 @@ fun VirtualKeyboardCustomizationDialog(
 private fun VirtualKeyboardKeyEditor(
     keyIndex: Int,
     keyConfig: VirtualKeyboardButtonConfig,
+    enabled: Boolean,
     onLabelChange: (String) -> Unit,
     onValueChange: (String) -> Unit,
     onActionChange: (VirtualKeyAction) -> Unit
@@ -173,6 +193,7 @@ private fun VirtualKeyboardKeyEditor(
         ) {
             OutlinedTextField(
                 value = keyConfig.label,
+                enabled = enabled,
                 onValueChange = onLabelChange,
                 modifier = Modifier.weight(1f),
                 label = { Text(stringResource(R.string.virtual_keyboard_key_label)) },
@@ -185,6 +206,7 @@ private fun VirtualKeyboardKeyEditor(
                 )
             )
             OutlinedButton(
+                enabled = enabled,
                 onClick = { onActionChange(keyConfig.action.next()) },
                 modifier = Modifier.width(102.dp)
             ) {
@@ -198,7 +220,7 @@ private fun VirtualKeyboardKeyEditor(
         OutlinedTextField(
             value = keyConfig.value,
             onValueChange = onValueChange,
-            enabled = keyConfig.action == VirtualKeyAction.SEND_TEXT,
+            enabled = enabled && keyConfig.action == VirtualKeyAction.SEND_TEXT,
             modifier = Modifier.fillMaxWidth(),
             label = { Text(stringResource(R.string.virtual_keyboard_key_value)) },
             singleLine = true,

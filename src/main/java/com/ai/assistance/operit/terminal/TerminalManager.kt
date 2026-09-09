@@ -20,6 +20,8 @@ import java.nio.file.Paths
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -34,6 +36,7 @@ import com.ai.assistance.operit.terminal.view.domain.OutputProcessor
 import java.util.UUID
 import java.util.TimeZone
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeoutOrNull
@@ -75,6 +78,7 @@ class TerminalManager private constructor(
 ) {
     internal val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val envInitMutex = Mutex()
+    private val environmentOperations = TerminalEnvironmentOperations()
     @Volatile
     private var isEnvInitialized = false
 
@@ -124,6 +128,11 @@ class TerminalManager private constructor(
     
     // 单例的 TerminalProvider
     private var terminalProvider: TerminalProvider? = null
+    private val _activeEnvironmentType = MutableStateFlow<TerminalType?>(null)
+    val activeEnvironmentType = _activeEnvironmentType.asStateFlow()
+    private val _initialSessionState = MutableStateFlow(SessionInitState.INITIALIZING)
+    val initialSessionState = _initialSessionState.asStateFlow()
+    private var initialSessionJob: Job? = null
     private val providerMutex = Mutex()
 
     // 暴露会话管理器的状态
@@ -160,22 +169,28 @@ class TerminalManager private constructor(
     }
 
     init {
-        // 在初始化时异步创建默认session
-        coroutineScope.launch {
+        retryInitialSession()
+    }
+
+    /** 默认会话准备先于会话表出现；UI 必须能观察这段耗时及其失败。 */
+    fun retryInitialSession() {
+        if (initialSessionJob?.isActive == true) return
+        if (terminalState.value.sessions.any { it.initState == SessionInitState.READY }) {
+            _initialSessionState.value = SessionInitState.READY
+            return
+        }
+        _initialSessionState.value = SessionInitState.INITIALIZING
+        initialSessionJob = coroutineScope.launch {
             try {
                 Log.d(TAG, "Creating default session...")
-                // 自动检测：如果有SSH配置则创建SSH会话，否则创建本地会话
-                val sshConfig = sshConfigManager.getConfig()
-                val isEnabled = sshConfigManager.isEnabled()
-                if (sshConfig != null && isEnabled) {
-                    Log.d(TAG, "Found SSH config, creating SSH session")
-                    createNewSession("SSH")
-                } else {
-                    Log.d(TAG, "No SSH config, creating local session")
-                    createNewSession("Local")
-                }
+                createNewSession()
+                _initialSessionState.value = SessionInitState.READY
                 Log.d(TAG, "Default session created successfully")
+            } catch (cancelled: CancellationException) {
+                _initialSessionState.value = SessionInitState.FAILED
+                throw cancelled
             } catch (e: Exception) {
+                _initialSessionState.value = SessionInitState.FAILED
                 Log.e(TAG, "Failed to create default session", e)
             }
         }
@@ -189,9 +204,10 @@ class TerminalManager private constructor(
      */
     suspend fun createNewSession(
         title: String? = null
-    ): TerminalSessionData {
-        // 自动检测终端类型
-        val terminalType = if (sshConfigManager.getConfig() != null && sshConfigManager.isEnabled()) {
+    ): TerminalSessionData = environmentOperations.run {
+        check(initializeEnvironment()) { "Terminal environment initialization failed" }
+        // 保存的偏好可以尚未应用，会话身份必须来自真正接收命令的唯一 provider。
+        val terminalType = if (getTerminalProvider() is SSHTerminalProvider) {
             TerminalType.SSH
         } else {
             TerminalType.LOCAL
@@ -199,10 +215,8 @@ class TerminalManager private constructor(
         
         val newSession = sessionManager.createNewSession(title, terminalType)
 
-        // 异步初始化会话
-        coroutineScope.launch {
-            initializeSession(newSession.id)
-        }
+        // 启动属于本次创建操作；维护取消时不能遗留独立协程重新启动旧会话。
+        startSession(newSession.id)
 
         // 等待会话初始化完成
         // Ubuntu rootfs is extracted on-device before the PTY can reach READY.  Thirty seconds
@@ -211,7 +225,7 @@ class TerminalManager private constructor(
         val initState = withTimeoutOrNull(SESSION_READY_TIMEOUT_MS) { // 3分钟超时
             terminalState.first { state ->
                 val session = state.sessions.find { it.id == newSession.id }
-                session?.initState == SessionInitState.READY || session?.initState == SessionInitState.FAILED
+                session == null || session.initState == SessionInitState.READY || session.initState == SessionInitState.FAILED
             }.sessions.find { it.id == newSession.id }?.initState
         }
 
@@ -225,7 +239,7 @@ class TerminalManager private constructor(
         }
 
         Log.d(TAG, "Session ${newSession.id} initialized successfully")
-        return sessionManager.getSession(newSession.id) ?: newSession
+        sessionManager.getSession(newSession.id) ?: error("Terminal session was closed")
     }
 
     /**
@@ -295,46 +309,27 @@ class TerminalManager private constructor(
             ?: throw IllegalStateException("Terminal session ${session.id} is not writable")
         writer.write(input)
         writer.flush()
-        Log.d(
-            TAG,
-            "Sent terminal input to kernel [source=$source, sessionId=${session.id}]: '${escapeInputForLog(input)}'"
-        )
-    }
-
-    private fun escapeInputForLog(input: String): String {
-        return buildString(input.length) {
-            input.forEach { char ->
-                when (char) {
-                    '\\' -> append("\\\\")
-                    '\n' -> append("\\n")
-                    '\r' -> append("\\r")
-                    '\t' -> append("\\t")
-                    else -> {
-                        if (char.isISOControl()) {
-                            append("\\u")
-                            append(char.code.toString(16).padStart(4, '0'))
-                        } else {
-                            append(char)
-                        }
-                    }
-                }
-            }
-        }
+        // 原始输入可能是密码或令牌，仅记录提交边界，不持久化正文。
+        Log.d(TAG, "Sent terminal input to kernel [source=$source, sessionId=${session.id}, chars=${input.length}]")
     }
 
     /**
      * 发送命令
      */
     suspend fun sendCommand(command: String, commandId: String? = null): String {
+        val sessionId = sessionManager.getCurrentSession()?.id ?: error("No terminal session selected")
+        return sendUserCommand(sessionId, command, commandId)
+    }
+
+    internal suspend fun sendUserCommand(sessionId: String, command: String, commandId: String? = null): String {
         val actualCommandId = commandId ?: UUID.randomUUID().toString()
-        val session = sessionManager.getCurrentSession() ?: return actualCommandId
+        val session = sessionManager.getSession(sessionId) ?: error("Terminal session was closed")
 
         // Allow input during initialization (e.g. password prompt) or interactive mode
         val isInitializing = session.initState != SessionInitState.READY
         
         if (session.isInteractiveMode || isInitializing) {
-            Log.d(TAG, "Session in interactive mode or initializing, sending as input: $command")
-            sendInput(command + TERMINAL_ENTER)
+            sendInputToSession(session.id, command + TERMINAL_ENTER)
             return actualCommandId
         }
 
@@ -383,7 +378,7 @@ class TerminalManager private constructor(
 
                 if (session.currentExecutingCommand?.isExecuting == true) {
                     session.commandQueue.add(QueuedCommand(actualCommandId, command))
-                    Log.d(TAG, "Command queued for session $sessionId: $command (id: $actualCommandId). Queue size: ${session.commandQueue.size}")
+                    Log.d(TAG, "Command queued for session $sessionId (id: $actualCommandId). Queue size: ${session.commandQueue.size}")
                 } else {
                     submissionFailure = executeCommandInternal(command, session, actualCommandId)
                 }
@@ -558,7 +553,7 @@ class TerminalManager private constructor(
 
             if (session.commandQueue.isNotEmpty()) {
                 val nextCommand = session.commandQueue.removeAt(0)
-                Log.d(TAG, "Processing next queued command: ${nextCommand.command} (id: ${nextCommand.id}). Queue size: ${session.commandQueue.size}")
+                Log.d(TAG, "Processing next queued command (id: ${nextCommand.id}). Queue size: ${session.commandQueue.size}")
                 submissionFailure = executeCommandInternal(nextCommand.command, session, nextCommand.id)
             }
         }
@@ -580,7 +575,7 @@ class TerminalManager private constructor(
             val wrappedCommand = buildCommandWithExitMarker(command, commandId)
             val fullInput = "$wrappedCommand$TERMINAL_ENTER"
             writeInputToKernel(session, fullInput, "command")
-            Log.d(TAG, "Sent command to PTY: $command")
+            Log.d(TAG, "Sent command to PTY for session ${session.id}")
             null
         } catch (e: Exception) {
             Log.e(TAG, "Error sending command", e)
@@ -622,18 +617,11 @@ class TerminalManager private constructor(
      * 发送输入
      */
     fun sendInput(input: String) {
+        val targetId = sessionManager.getCurrentSession()?.id ?: return
         coroutineScope.launch(Dispatchers.IO) {
-            val session = sessionManager.getCurrentSession() ?: return@launch
-
             try {
-                writeInputToKernel(session, input, "direct-input")
-
-                // 如果用户提供了交互式输入，则重置等待状态
-                if (session.isWaitingForInteractiveInput) {
-                    sessionManager.updateSession(session.id) {
-                        it.copy(isWaitingForInteractiveInput = false)
-                    }
-                }
+                sendInputToSession(targetId, input)
+            } catch (cancelled: CancellationException) { throw cancelled
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending input", e)
             }
@@ -644,9 +632,10 @@ class TerminalManager private constructor(
      * 发送中断信号
      */
     fun sendInterruptSignal() {
+        val targetId = sessionManager.getCurrentSession()?.id ?: return
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                val currentSession = sessionManager.getCurrentSession()
+                val currentSession = sessionManager.getSession(targetId)
                 currentSession?.let {
                     val commandId = it.currentExecutingCommand?.takeIf { command -> command.isExecuting }?.id
                     if (commandId == null) {
@@ -662,18 +651,20 @@ class TerminalManager private constructor(
         }
     }
 
-    private fun initializeSession(sessionId: String) {
-        coroutineScope.launch {
-            val success = initializeEnvironment()
-            if (success) {
-                startSession(sessionId)
-            } else {
-                markSessionFailed(sessionId, "terminal environment initialization failed")
-            }
+    suspend fun sendInputToSession(sessionId: String, input: String) = withContext(Dispatchers.IO) {
+        val session = sessionManager.getSession(sessionId) ?: error("Terminal session was closed")
+        writeInputToKernel(session, input, "direct-input")
+        if (session.isWaitingForInteractiveInput) {
+            sessionManager.updateSession(session.id) { it.copy(isWaitingForInteractiveInput = false) }
         }
     }
 
     private suspend fun startSession(sessionId: String) {
+        try { environmentOperations.run { startSessionInternal(sessionId) } }
+        catch (busy: TerminalEnvironmentMaintenanceException) { markSessionFailed(sessionId, busy.message.orEmpty()) }
+    }
+
+    private suspend fun startSessionInternal(sessionId: String) {
         withContext(Dispatchers.IO) {
             try {
                 Log.d(TAG, "Starting session $sessionId")
@@ -691,7 +682,6 @@ class TerminalManager private constructor(
                             var bytesRead: Int
                             while (inputStream.read(buffer).also { bytesRead = it } != -1) {
                                 val chunk = String(buffer, 0, bytesRead)
-                                Log.d(TAG, "Read chunk: '$chunk'")
                                 outputProcessor.processOutput(sessionId, chunk, sessionManager)
                             }
                             reachedEof = true
@@ -903,11 +893,15 @@ class TerminalManager private constructor(
     /**
      * 获取或创建单例的终端提供者
      */
-    private suspend fun getTerminalProvider(): TerminalProvider {
+    private suspend fun getTerminalProvider(): TerminalProvider = environmentOperations.run {
+        getTerminalProviderInternal()
+    }
+
+    private suspend fun getTerminalProviderInternal(): TerminalProvider {
         providerMutex.withLock {
             if (terminalProvider == null) {
-                val sshConfig = sshConfigManager.getConfig()
-                val provider = if (sshConfig != null && sshConfigManager.isEnabled()) {
+                val provider = if (sshConfigManager.isEnabled()) {
+                    val sshConfig = checkNotNull(sshConfigManager.getConfig()) { "SSH is enabled but no connection is configured" }
                     Log.d(TAG, "Creating singleton SSH terminal provider")
                     SSHTerminalProvider(application, sshConfig, this)
                 } else {
@@ -916,12 +910,17 @@ class TerminalManager private constructor(
                 }
                 provider.connect().getOrThrow()
                 terminalProvider = provider
+                _activeEnvironmentType.value = if (provider is SSHTerminalProvider) TerminalType.SSH else TerminalType.LOCAL
             }
         }
         return terminalProvider!!
     }
 
-    suspend fun initializeEnvironment(): Boolean {
+    suspend fun initializeEnvironment(): Boolean = try {
+        environmentOperations.run { initializeEnvironmentInternal() }
+    } catch (_: TerminalEnvironmentMaintenanceException) { false }
+
+    private suspend fun initializeEnvironmentInternal(): Boolean {
         if (isEnvInitialized) {
             return withContext(Dispatchers.IO) {
                 try {
@@ -1402,7 +1401,6 @@ class TerminalManager private constructor(
         val aptSource = sourceManager.getSelectedSource(PackageManagerType.APT)
         val pipSource = sourceManager.getSelectedSource(PackageManagerType.PIP)
         val npmSource = sourceManager.getSelectedSource(PackageManagerType.NPM)
-        val rustSource = sourceManager.getSelectedSource(PackageManagerType.RUST)
 
         val common = """
         export TMPDIR=$tmpDir
@@ -2007,30 +2005,9 @@ EOF
         }
         """.trimIndent()
 
-        val configureSources = """
-        configure_sources(){
-          # 配置APT源
-          cat <<'EOF' > ${'$'}UBUNTU_PATH/etc/apt/sources.list
-        # From Kiyori Settings - ${aptSource.name}
-        deb ${aptSource.url} ${manifest.codename} main restricted universe multiverse
-        deb ${aptSource.url} ${manifest.codename}-updates main restricted universe multiverse
-        deb ${aptSource.url} ${manifest.codename}-backports main restricted universe multiverse
-        deb ${aptSource.url} ${manifest.codename}-security main restricted universe multiverse
-        EOF
-          
-          # 配置Pip/Uv源
-          mkdir -p ${'$'}UBUNTU_PATH/root/.config/pip 2>/dev/null
-          echo '[global]' > ${'$'}UBUNTU_PATH/root/.config/pip/pip.conf
-          echo 'index-url = ${pipSource.url}' >> ${'$'}UBUNTU_PATH/root/.config/pip/pip.conf
-          
-          mkdir -p ${'$'}UBUNTU_PATH/root/.config/uv 2>/dev/null
-          echo 'index-url = "${pipSource.url}"' > ${'$'}UBUNTU_PATH/root/.config/uv/uv.toml
-          
-          # 配置NPM源
-          mkdir -p ${'$'}UBUNTU_PATH/root 2>/dev/null
-          echo 'registry=${npmSource.url}' > ${'$'}UBUNTU_PATH/root/.npmrc
-        }
-        """.trimIndent()
+        val configureSources = com.ai.assistance.operit.terminal.utils.localSourceConfigurationCommand(
+            aptSource, pipSource, npmSource, manifest.codename,
+        )
 
         val fixPermissions = """
         fix_permissions(){
@@ -2200,7 +2177,7 @@ $prootBindSetup
         val sshShell = """
         ssh_shell(){
           if ! install_ubuntu; then return 1; fi
-          configure_sources
+          configure_sources || return 1
           fix_permissions
           bump_progress
           # SSH 自己输出远端就绪标记。断线直接结束会话，禁止落入本地 Shell 执行后续安装。
@@ -2220,7 +2197,7 @@ $prootBindSetup
           if ! install_ubuntu; then
             return 1
           fi
-          configure_sources
+          configure_sources || return 1
           fix_permissions
           sleep 1
           bump_progress
@@ -2276,23 +2253,43 @@ $prootBindSetup
         }
     }
 
+    internal suspend fun <T> withEnvironmentMaintenance(waitForCurrent: Boolean = false, block: suspend () -> T): T =
+        environmentOperations.maintain(waitForCurrent) {
+            // 已阻止新的初始化/创建和隐藏执行，且在途操作已经退出。
+            isEnvInitialized = false
+            val sessionsToStop = terminalState.value.sessions
+            sessionsToStop.forEach { closingSessions.add(it.id) }
+            providerMutex.withLock {
+                terminalProvider?.disconnect()
+                terminalProvider = null
+                _activeEnvironmentType.value = null
+            }
+            check(sshdServerManager.stopServer()) { "Unable to stop local SSH server" }
+            sessionsToStop.forEach { session ->
+                session.readJob?.cancel()
+                session.terminalSession?.process?.let { process ->
+                    process.destroy()
+                    check(process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                        "Terminal process did not exit; environment files have not been removed"
+                    }
+                }
+            }
+            activeSessions.clear()
+            sessionManager.cleanup()
+            try { block() } finally { isEnvInitialized = false }
+        }
+
     fun prepareForMaintenance() {
-        // 释放 provider 连接
-        kotlinx.coroutines.runBlocking {
-            terminalProvider?.disconnect()
-            Log.d(TAG, "Disconnected terminal provider")
-            
-            // 停止SSHD服务器
-            sshdServerManager.stopServer()
-            Log.d(TAG, "Stopped SSHD server")
+        kotlinx.coroutines.runBlocking { withEnvironmentMaintenance(waitForCurrent = true) { } }
+    }
+
+    /** 用户确认后停止现有执行，再让新会话消费已保存配置；连接失败保持失败。 */
+    suspend fun applyConnectionSettings() {
+        if (sshConfigManager.isEnabled()) {
+            checkNotNull(sshConfigManager.getConfig()) { "SSH connection configuration is missing" }
         }
-        terminalProvider = null
-        
-        activeSessions.keys.toList().forEach { sessionId ->
-            closeTerminalSession(sessionId)
-        }
-        sessionManager.cleanup()
-        Log.d(TAG, "Prepared terminal manager for maintenance.")
+        withEnvironmentMaintenance { }
+        createNewSession()
     }
 
     fun cleanup() {
@@ -2306,6 +2303,14 @@ $prootBindSetup
         command: String,
         executorKey: String = "default",
         timeoutMs: Long = 120000L
+    ): HiddenExecResult = environmentOperations.run {
+        executeHiddenCommandInternal(command, executorKey, timeoutMs)
+    }
+
+    private suspend fun executeHiddenCommandInternal(
+        command: String,
+        executorKey: String,
+        timeoutMs: Long,
     ): HiddenExecResult {
         val initialized = initializeEnvironment()
         if (!initialized) {

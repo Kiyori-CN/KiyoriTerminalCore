@@ -128,6 +128,8 @@ class TerminalManager private constructor(
     
     // 单例的 TerminalProvider
     private var terminalProvider: TerminalProvider? = null
+    // 本地启动器也由本管理器持有；SSH 工具明确请求本机时不会在远端嵌套执行。
+    private var localCommandProvider: LocalTerminalProvider? = null
     private val _activeEnvironmentType = MutableStateFlow<TerminalType?>(null)
     val activeEnvironmentType = _activeEnvironmentType.asStateFlow()
     private val _initialSessionState = MutableStateFlow(SessionInitState.INITIALIZING)
@@ -906,7 +908,7 @@ class TerminalManager private constructor(
                     SSHTerminalProvider(application, sshConfig, this)
                 } else {
                     Log.d(TAG, "Creating singleton local terminal provider")
-                    LocalTerminalProvider(application)
+                    localCommandProvider ?: LocalTerminalProvider(application).also { localCommandProvider = it }
                 }
                 provider.connect().getOrThrow()
                 terminalProvider = provider
@@ -2107,7 +2109,7 @@ EOF
         "${'$'}BIN/busybox" mount --bind $localTmpPath "${'$'}UBUNTU_PATH$localTmpPath" 2>/dev/null || true
         "${'$'}BIN/busybox" mount --bind "${'$'}HOME_DIR" "${'$'}UBUNTU_PATH${'$'}HOME_DIR" 2>/dev/null || true
         COMMAND_TO_EXEC="$(cat "${'$'}CMD_FILE" 2>/dev/null)"
-        "${'$'}BIN/busybox" chroot "${'$'}UBUNTU_PATH" /usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash TERM=xterm-256color LANG=en_US.UTF-8 TZ=$hostTimeZone PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "KIYORI_SSH_BOOTSTRAP=${'$'}{KIYORI_SSH_BOOTSTRAP:-0}" "COMMAND_TO_EXEC=${'$'}COMMAND_TO_EXEC" "OPERIT_UID=${'$'}OPERIT_UID" "OPERIT_GID=${'$'}OPERIT_GID" "OPERIT_GROUPS=${'$'}OPERIT_GROUPS" /bin/bash -lc 'if [ "${'$'}KIYORI_SSH_BOOTSTRAP" != 1 ]; then echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; fi; umask 0002; if [ -n "${'$'}OPERIT_GID" ]; then chown 0:"${'$'}OPERIT_GID" /root 2>/dev/null || true; chmod 2775 /root 2>/dev/null || true; fi; eval "${'$'}COMMAND_TO_EXEC"'
+        "${'$'}BIN/busybox" chroot "${'$'}UBUNTU_PATH" /usr/bin/env -i HOME=/root USER=root LOGNAME=root SHELL=/bin/bash TERM=xterm-256color LANG=en_US.UTF-8 TZ=$hostTimeZone PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "SSHPASS=${'$'}{SSHPASS:-}" "KIYORI_SSH_BOOTSTRAP=${'$'}{KIYORI_SSH_BOOTSTRAP:-0}" "COMMAND_TO_EXEC=${'$'}COMMAND_TO_EXEC" "OPERIT_UID=${'$'}OPERIT_UID" "OPERIT_GID=${'$'}OPERIT_GID" "OPERIT_GROUPS=${'$'}OPERIT_GROUPS" /bin/bash -lc 'if [ "${'$'}KIYORI_SSH_BOOTSTRAP" != 1 ]; then echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; fi; umask 0002; if [ -n "${'$'}OPERIT_GID" ]; then chown 0:"${'$'}OPERIT_GID" /root 2>/dev/null || true; chmod 2775 /root 2>/dev/null || true; fi; eval "${'$'}COMMAND_TO_EXEC"'
         ret=${'$'}?
         cleanup_mounts
         exit ${'$'}ret
@@ -2149,6 +2151,7 @@ $prootBindSetup
                 LANG=en_US.UTF-8 \
                 TZ=$hostTimeZone \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                SSHPASS="${'$'}{SSHPASS:-}" \
                 KIYORI_SSH_BOOTSTRAP="${'$'}{KIYORI_SSH_BOOTSTRAP:-0}" \
                 COMMAND_TO_EXEC="${'$'}COMMAND_TO_EXEC" \
                 /bin/bash -lc 'if [ "${'$'}KIYORI_SSH_BOOTSTRAP" != 1 ]; then echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; fi; eval "${'$'}COMMAND_TO_EXEC"'
@@ -2167,6 +2170,7 @@ $prootBindSetup
                 LANG=en_US.UTF-8 \
                 TZ=$hostTimeZone \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                SSHPASS="${'$'}{SSHPASS:-}" \
                 KIYORI_SSH_BOOTSTRAP="${'$'}{KIYORI_SSH_BOOTSTRAP:-0}" \
                 COMMAND_TO_EXEC="${'$'}COMMAND_TO_EXEC" \
                 /bin/bash -lc 'if [ "${'$'}KIYORI_SSH_BOOTSTRAP" != 1 ]; then echo LOGIN_SUCCESSFUL; echo TERMINAL_READY; fi; eval "${'$'}COMMAND_TO_EXEC"'
@@ -2261,6 +2265,8 @@ $prootBindSetup
             sessionsToStop.forEach { closingSessions.add(it.id) }
             providerMutex.withLock {
                 terminalProvider?.disconnect()
+                if (localCommandProvider !== terminalProvider) localCommandProvider?.disconnect()
+                localCommandProvider = null
                 terminalProvider = null
                 _activeEnvironmentType.value = null
             }
@@ -2302,15 +2308,17 @@ $prootBindSetup
     suspend fun executeHiddenCommand(
         command: String,
         executorKey: String = "default",
-        timeoutMs: Long = 120000L
+        timeoutMs: Long = 120000L,
+        localOnly: Boolean = false,
     ): HiddenExecResult = environmentOperations.run {
-        executeHiddenCommandInternal(command, executorKey, timeoutMs)
+        executeHiddenCommandInternal(command, executorKey, timeoutMs, localOnly)
     }
 
     private suspend fun executeHiddenCommandInternal(
         command: String,
         executorKey: String,
         timeoutMs: Long,
+        localOnly: Boolean,
     ): HiddenExecResult {
         val initialized = initializeEnvironment()
         if (!initialized) {
@@ -2322,7 +2330,13 @@ $prootBindSetup
             )
         }
 
-        return getTerminalProvider().executeHiddenCommand(
+        val provider = if (localOnly) providerMutex.withLock {
+            localCommandProvider ?: LocalTerminalProvider(application).also {
+                it.connect().getOrThrow()
+                localCommandProvider = it
+            }
+        } else getTerminalProvider()
+        return provider.executeHiddenCommand(
             command = command,
             executorKey = executorKey,
             timeoutMs = timeoutMs

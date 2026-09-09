@@ -59,4 +59,12 @@ class SSHConfigDraftTest {
         assertTrue(SSHConfigField.PASSWORD in draft.copy(password = "a\u0000b").errors)
         assertTrue(SSHConfigField.LOCAL_PASSWORD in draft.copy(enableReverseTunnel = true, localSshPassword = "short").errors)
     }
+
+    @Test fun rejectsShellAndTargetSyntaxButAcceptsIpv6() {
+        for (host in listOf("-option", "user@host", "host;command", "$(command)", "ssh://host")) {
+            assertTrue(host, SSHConfigField.HOST in draft.copy(host = host).errors)
+        }
+        assertTrue(draft.copy(host = "2001:db8::1").errors.isEmpty())
+        assertTrue(SSHConfigField.LOCAL_USERNAME in draft.copy(enableReverseTunnel = true, localSshUsername = "user;command").errors)
+    }
 }

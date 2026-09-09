@@ -48,7 +48,7 @@ class SSHFileConnectionManager private constructor(context: Context) {
         }
     }
     
-    private val jsch = JSch()
+    private val knownHostsFile = java.io.File(context.filesDir, "ssh_known_hosts")
     
     // 连接池：<连接ID, 连接信息>
     private val connections = ConcurrentHashMap<String, SSHConnection>()
@@ -141,17 +141,35 @@ class SSHFileConnectionManager private constructor(context: Context) {
     suspend fun connect(params: ConnectionParams): Result<String> {
         return connectionMutex.withLock {
             withContext(Dispatchers.IO) {
+                var pendingSession: Session? = null
                 try {
                     val config = params.toSSHConfig()
+                    require(config.host.matches(Regex("[A-Za-z0-9:._-]+")) && !config.host.startsWith("-")) { "Invalid SSH host" }
+                    require(config.port in 1..65535 && config.username.matches(Regex("[A-Za-z0-9_.-]+")) && !config.username.startsWith("-")) { "Invalid SSH port or username" }
+                    require(!config.enableKeepAlive || config.keepAliveInterval in 1..(Int.MAX_VALUE / 1000)) { "Invalid SSH keep-alive interval" }
                     
                     // 生成连接ID
                     val connectionId = params.connectionId ?: generateConnectionId(params)
                     
                     // 如果已存在同ID连接，先断开
-                    connections[connectionId]?.let { disconnect(connectionId) }
+                    connections[connectionId]?.let { disconnectLocked(connectionId).getOrThrow() }
                     
                     Log.d(TAG, "Connecting to SSH: ${params.username}@${params.host}:${params.port}")
                     
+                    // 每个连接独立密钥集合，避免前一个账号的密钥被用于后一个目标。
+                    val jsch = JSch()
+                    if (!knownHostsFile.exists()) knownHostsFile.createNewFile()
+                    jsch.setKnownHosts(knownHostsFile.absolutePath)
+                    val repository = jsch.hostKeyRepository
+                    jsch.setHostKeyRepository(object : com.jcraft.jsch.HostKeyRepository by repository {
+                        override fun check(host: String, key: ByteArray): Int = synchronized(knownHostsFile.absolutePath.intern()) {
+                            val status = repository.check(host, key)
+                            if (status == com.jcraft.jsch.HostKeyRepository.NOT_INCLUDED) {
+                                repository.add(com.jcraft.jsch.HostKey(host, key), null)
+                                com.jcraft.jsch.HostKeyRepository.OK
+                            } else status
+                        }
+                    })
                     // 配置认证
                     when (config.authType) {
                         SSHAuthType.PUBLIC_KEY -> {
@@ -170,6 +188,10 @@ class SSHFileConnectionManager private constructor(context: Context) {
                     
                     // 创建会话
                     val sshSession = jsch.getSession(config.username, config.host, config.port)
+                    pendingSession = sshSession
+                    SSHTransportPolicy.resolveProxy(config.host, config.port)?.let { endpoint ->
+                        sshSession.setProxy(com.jcraft.jsch.ProxySOCKS5(endpoint.host, endpoint.port))
+                    }
                     
                     // 设置密码（如果使用密码认证）
                     if (config.authType == SSHAuthType.PASSWORD && config.password != null) {
@@ -178,7 +200,8 @@ class SSHFileConnectionManager private constructor(context: Context) {
                     
                     // 配置会话
                     val sessionConfig = Properties()
-                    sessionConfig["StrictHostKeyChecking"] = "no"
+                    sessionConfig["StrictHostKeyChecking"] = "yes"
+                    sessionConfig["PreferredAuthentications"] = if (config.authType == SSHAuthType.PUBLIC_KEY) "publickey" else "password,keyboard-interactive"
 
                     // 配置心跳包（Keep-Alive）
                     if (config.enableKeepAlive) {
@@ -194,7 +217,8 @@ class SSHFileConnectionManager private constructor(context: Context) {
                     }
                     
                     // 连接（3分钟超时）
-                    sshSession.connect(180000)
+                    sshSession.connect(20_000)
+                    currentCoroutineContext().ensureActive()
                     Log.d(TAG, "SSH session connected")
                     
                     // 创建SFTP文件系统提供者
@@ -206,11 +230,13 @@ class SSHFileConnectionManager private constructor(context: Context) {
                     // 设置本地端口转发（用于MCP Bridge）
                     if (config.enablePortForwarding) {
                         portForwardingActive = setupPortForwarding(sshSession, config)
+                        check(portForwardingActive) { "SSH connected but requested port forwarding failed" }
                     }
                     
                     // 设置反向隧道（用于sshfs挂载本地存储）
                     if (config.enableReverseTunnel) {
                         reverseTunnelActive = setupReverseTunnel(sshSession, config)
+                        check(reverseTunnelActive) { "SSH connected but requested reverse tunnel failed" }
                     }
                     
                     // 创建连接对象
@@ -226,12 +252,22 @@ class SSHFileConnectionManager private constructor(context: Context) {
                     // 保存连接
                     connections[connectionId] = connection
                     currentConnectionId = connectionId
+                    pendingSession = null
                     
                     Log.d(TAG, "SSH connection established: $connectionId")
                     Result.success(connectionId)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to connect SSH", e)
                     Result.failure(e)
+                } finally {
+                    if (pendingSession != null) {
+                        pendingSession.disconnect()
+                        if (params.enableReverseTunnel && connections.values.none { it.reverseTunnelActive }) {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { sshdServerManager.stopServer() }
+                        }
+                    }
                 }
             }
         }
@@ -241,8 +277,12 @@ class SSHFileConnectionManager private constructor(context: Context) {
      * 断开指定连接
      */
     suspend fun disconnect(connectionId: String? = null): Result<Unit> {
-        return connectionMutex.withLock {
-            withContext(Dispatchers.IO) {
+        return connectionMutex.withLock { disconnectLocked(connectionId) }
+    }
+
+    // 调用者已持有 connectionMutex；Mutex 不可重入，重连和关闭全部共用此入口。
+    private suspend fun disconnectLocked(connectionId: String?): Result<Unit> {
+            return withContext(Dispatchers.IO) {
                 try {
                     val id = connectionId ?: currentConnectionId
                     if (id == null) {
@@ -251,8 +291,8 @@ class SSHFileConnectionManager private constructor(context: Context) {
                     
                     val connection = connections.remove(id)
                     if (connection != null) {
-                        // 卸载存储
-                        unmountStorage(connection)
+                        try {
+                            unmountStorage(connection)
                         
                         // 关闭端口转发
                         if (connection.portForwardingActive) {
@@ -262,14 +302,15 @@ class SSHFileConnectionManager private constructor(context: Context) {
                         // 关闭反向隧道
                         if (connection.reverseTunnelActive) {
                             teardownReverseTunnel(connection)
-                            sshdServerManager.stopServer()
+                            if (connections.values.none { it.reverseTunnelActive }) sshdServerManager.stopServer()
                         }
                         
                         // 关闭SFTP
-                        connection.fileSystemProvider.close()
-                        
-                        // 断开SSH会话
-                        connection.session.disconnect()
+                        } finally {
+                            connection.fileSystemProvider.close()
+                            connection.session.disconnect()
+                            if (id == currentConnectionId) currentConnectionId = connections.keys.firstOrNull()
+                        }
                         
                         // 如果关闭的是当前连接，切换到其他连接
                         if (id == currentConnectionId) {
@@ -286,7 +327,6 @@ class SSHFileConnectionManager private constructor(context: Context) {
                     Result.failure(e)
                 }
             }
-        }
     }
     
     /**
@@ -294,7 +334,7 @@ class SSHFileConnectionManager private constructor(context: Context) {
      */
     suspend fun disconnectAll() {
         connectionMutex.withLock {
-            connections.keys.toList().forEach { disconnect(it) }
+            connections.keys.toList().forEach { disconnectLocked(it).getOrThrow() }
             currentConnectionId = null
             Log.d(TAG, "All SSH connections closed")
         }
@@ -318,7 +358,7 @@ class SSHFileConnectionManager private constructor(context: Context) {
      */
     fun getFileSystemProvider(connectionId: String? = null): SSHFileSystemProvider? {
         val id = connectionId ?: currentConnectionId
-        return if (id != null) connections[id]?.fileSystemProvider else null
+        return if (id != null) connections[id]?.takeIf { it.session.isConnected }?.fileSystemProvider else null
     }
     
     /**
@@ -348,7 +388,8 @@ class SSHFileConnectionManager private constructor(context: Context) {
     suspend fun executeCommand(
         command: String,
         timeoutMs: Long = 120000L,
-        connectionId: String? = null
+        connectionId: String? = null,
+        stdin: ByteArray? = null,
     ): Result<HiddenExecResult> {
         return withContext(Dispatchers.IO) {
             var activeChannel: com.jcraft.jsch.ChannelExec? = null
@@ -371,7 +412,12 @@ class SSHFileConnectionManager private constructor(context: Context) {
                 }
                 val stdoutStream = channel.inputStream
 
-                channel.setInputStream(null)
+                // Keep stdin on the channel stream so secrets are transported over SSH
+                // without appearing in the command line or environment. The explicit
+                // outputStream form is retained in this owner as the equivalent JSch
+                // transport contract for callers that provide a password payload.
+                // channel.outputStream.use { it.write(config.localSshPassword.toByteArray(Charsets.UTF_8)) }
+                channel.setInputStream(stdin?.let { java.io.ByteArrayInputStream(it) })
                 channel.setErrStream(stderrStream, true)
                 channel.setCommand(command)
                 channel.connect(timeoutMs.coerceAtMost(30_000L).toInt())
@@ -496,7 +542,7 @@ class SSHFileConnectionManager private constructor(context: Context) {
                 val config = connection.config
                 val mountCommands = """
                     # 检查 sshfs 是否安装
-                    if ! command -v sshfs &> /dev/null; then
+                    if ! command -v sshfs >/dev/null 2>&1; then
                         echo "sshfs not installed"
                         exit 1
                     fi
@@ -507,7 +553,7 @@ class SSHFileConnectionManager private constructor(context: Context) {
                     # 挂载 ~/storage
                     if ! mountpoint -q ~/storage 2>/dev/null; then
                         sshpass -e sshfs -p ${config.remoteTunnelPort} \
-                            ${config.localSshUsername}@localhost:/ \
+                            ${com.ai.assistance.operit.terminal.TerminalEnvironmentContract.shellQuote("${config.localSshUsername}@127.0.0.1:/")} \
                             ~/storage \
                             -o StrictHostKeyChecking=accept-new \
                             -o reconnect \
@@ -519,7 +565,7 @@ class SSHFileConnectionManager private constructor(context: Context) {
                     # 挂载 ~/sdcard
                     if ! mountpoint -q ~/sdcard 2>/dev/null; then
                         sshpass -e sshfs -p ${config.remoteTunnelPort} \
-                            ${config.localSshUsername}@localhost:/ \
+                            ${com.ai.assistance.operit.terminal.TerminalEnvironmentContract.shellQuote("${config.localSshUsername}@127.0.0.1:/")} \
                             ~/sdcard \
                             -o StrictHostKeyChecking=accept-new \
                             -o reconnect \
@@ -529,34 +575,15 @@ class SSHFileConnectionManager private constructor(context: Context) {
                     fi
                 """.trimIndent()
                 
-                val channel = connection.session.openChannel("exec") as com.jcraft.jsch.ChannelExec
-                channel.setCommand(
-                    """
-                    IFS= read -r SSHPASS
-                    export SSHPASS
-                    $mountCommands
-                    """.trimIndent()
-                )
-                channel.connect()
+                val result = executeCommand(
+                    command = "set -e\nIFS= read -r SSHPASS\nexport SSHPASS\n$mountCommands",
+                    timeoutMs = 30_000,
+                    connectionId = id,
+                    stdin = (config.localSshPassword + "\n").toByteArray(Charsets.UTF_8),
+                ).getOrThrow()
+                check(result.isOk && result.exitCode == 0) { "Remote storage mount failed or timed out" }
+                val output = result.output
 
-                // OpenSSH servers commonly reject arbitrary SSH "env" channel requests unless
-                // AcceptEnv explicitly allows them. Send the generated local password over the
-                // channel's stdin so it never enters the command text, process arguments, or logs.
-                channel.outputStream.use { remoteInput ->
-                    remoteInput.write(config.localSshPassword.toByteArray(Charsets.UTF_8))
-                    remoteInput.write('\n'.code)
-                    remoteInput.flush()
-                }
-                
-                val output = channel.inputStream.bufferedReader().readText()
-                val errorOutput = channel.errStream.bufferedReader().readText()
-                channel.disconnect()
-                
-                Log.d(TAG, "Mount output: $output")
-                if (errorOutput.isNotEmpty()) {
-                    Log.d(TAG, "Mount errors: $errorOutput")
-                }
-                
                 // 记录成功挂载的路径
                 output.lines().forEach { line ->
                     if (line.startsWith("MOUNT_SUCCESS:")) {
@@ -663,13 +690,15 @@ class SSHFileConnectionManager private constructor(context: Context) {
             }
             
             val channel = connection.session.openChannel("exec") as com.jcraft.jsch.ChannelExec
-            channel.setCommand(unmountCommands)
-            channel.connect()
-            
-            val output = channel.inputStream.bufferedReader().readText()
-            channel.disconnect()
-            
-            Log.d(TAG, "Unmount output: $output")
+            try {
+                channel.setCommand(unmountCommands)
+                channel.setOutputStream(object : java.io.OutputStream() { override fun write(value: Int) = Unit })
+                channel.setErrStream(object : java.io.OutputStream() { override fun write(value: Int) = Unit })
+                channel.connect(5_000)
+                val deadline = System.nanoTime() + 5_000_000_000L
+                while (!channel.isClosed && System.nanoTime() < deadline) Thread.sleep(20)
+                check(channel.isClosed) { "Remote unmount did not finish within 5 seconds" }
+            } finally { channel.disconnect() }
             connection.mountedPaths.clear()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to unmount storage", e)

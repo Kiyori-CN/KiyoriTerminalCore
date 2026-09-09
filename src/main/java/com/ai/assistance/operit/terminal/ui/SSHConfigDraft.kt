@@ -24,11 +24,11 @@ internal data class SSHConfigDraft(
 ) {
     private fun port(value: String) = value.trim().toIntOrNull()?.takeIf { it in 1..65535 }
     private fun interval() = keepAliveInterval.trim().toIntOrNull()?.takeIf { it in 1..(Int.MAX_VALUE / 1000) }
-    private fun validName(value: String) = value.isNotBlank() && value.none { it.isISOControl() || it.isWhitespace() }
+    private fun validName(value: String) = value.matches(Regex("[A-Za-z0-9_.-]+")) && !value.startsWith("-")
 
     val errors: Set<SSHConfigField>
         get() = buildSet {
-            if (!validName(host.trim()) || "/" in host) add(SSHConfigField.HOST)
+            if (!host.trim().matches(Regex("[A-Za-z0-9:._-]+")) || host.trim().startsWith("-")) add(SSHConfigField.HOST)
             if (port(port) == null) add(SSHConfigField.PORT)
             if (!validName(username.trim())) add(SSHConfigField.USERNAME)
             if (authType == SSHAuthType.PASSWORD && (password.isEmpty() || '\u0000' in password)) add(SSHConfigField.PASSWORD)

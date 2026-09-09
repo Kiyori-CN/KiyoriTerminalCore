@@ -55,8 +55,8 @@ class SSHTerminalProvider(
                     host = sshConfig.host,
                     port = sshConfig.port,
                     username = sshConfig.username,
-                    password = sshConfig.password,
-                    privateKeyPath = sshConfig.privateKeyPath,
+                    password = if (sshConfig.authType == SSHAuthType.PASSWORD) sshConfig.password else null,
+                    privateKeyPath = if (sshConfig.authType == SSHAuthType.PUBLIC_KEY) sshConfig.privateKeyPath else null,
                     passphrase = sshConfig.passphrase,
                     enableKeepAlive = sshConfig.enableKeepAlive,
                     keepAliveInterval = sshConfig.keepAliveInterval,
@@ -81,6 +81,8 @@ class SSHTerminalProvider(
                     Log.e(TAG, "Failed to connect SSH", result.exceptionOrNull())
                     Result.failure(result.exceptionOrNull() ?: Exception("Unknown SSH connection error"))
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to connect to SSH server", e)
                 Result.failure(e)
@@ -112,6 +114,9 @@ class SSHTerminalProvider(
                 if (!isConnected()) {
                     connect().getOrThrow()
                 }
+                if (sshConfig.enableReverseTunnel) {
+                    sshFileManager.mountStorage(checkNotNull(sshConnectionId)).getOrThrow()
+                }
 
                 val filesDir: File = context.filesDir
                 val binDir: File = File(filesDir, "usr/bin")
@@ -134,15 +139,10 @@ class SSHTerminalProvider(
                 
                 activeSessions[sessionId] = terminalSession
                 
-                // 如果启用了反向隧道，挂载存储（通过管理器）
-                if (sshConfig.enableReverseTunnel) {
-                    sshConnectionId?.let { id ->
-                        sshFileManager.mountStorage(id)
-                    }
-                }
-                
                 Log.d(TAG, "SSH terminal session started via local pty: $sessionId")
                 Result.success(Pair(terminalSession, pty))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start SSH terminal session", e)
                 Result.failure(e)
@@ -151,13 +151,18 @@ class SSHTerminalProvider(
     }
     
     override suspend fun closeSession(sessionId: String) {
-        activeSessions[sessionId]?.let { session ->
+        withContext(Dispatchers.IO) {
+            activeSessions[sessionId]?.let { session ->
             session.process.destroy()
-            check(session.process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+            val exited = session.process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) ||
+                session.process.destroyForcibly().waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+            check(exited) {
                 "Terminal process did not exit"
             }
             activeSessions.remove(sessionId)
             Log.d(TAG, "Closed SSH terminal session (process): $sessionId")
+            Unit
+            }
         }
     }
 
@@ -211,16 +216,19 @@ class SSHTerminalProvider(
         )
     }
 
-    private fun buildSshCommand(): String {
+    private suspend fun buildSshCommand(): String {
         val cmd = StringBuilder()
         
         // 如果是密码认证，使用sshpass自动输入密码
         if (sshConfig.authType == SSHAuthType.PASSWORD && sshConfig.password != null) {
             cmd.append("sshpass -e ")
+        } else if (sshConfig.authType == SSHAuthType.PUBLIC_KEY && !sshConfig.passphrase.isNullOrEmpty()) {
+            cmd.append("sshpass -e -P 'Enter passphrase' ")
         }
         
         cmd.append("ssh")
         cmd.append(" -tt -o ConnectTimeout=15 -o ConnectionAttempts=1 -p ${sshConfig.port}")
+        cmd.append(" ").append(com.ai.assistance.operit.terminal.utils.SSHTransportPolicy.openSshProxyOption(sshConfig.host, sshConfig.port))
         
         // 注意：反向隧道现在通过JSch Session API配置（setupReverseTunnel），不再需要ssh命令参数
         
@@ -232,6 +240,8 @@ class SSHTerminalProvider(
         }
         
         cmd.append(" -o StrictHostKeyChecking=accept-new")
+        if (sshConfig.authType == SSHAuthType.PUBLIC_KEY) cmd.append(" -o IdentitiesOnly=yes")
+        else cmd.append(" -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no")
         
         // 配置心跳包（Keep-Alive）
         if (sshConfig.enableKeepAlive) {
@@ -248,7 +258,7 @@ class SSHTerminalProvider(
         return cmd.toString()
     }
 
-    private fun buildEnvironment(): Map<String, String> {
+    private suspend fun buildEnvironment(): Map<String, String> {
         val filesDir: File = context.filesDir
         val usrDir: File = File(filesDir, "usr")
         val binDir: File = File(usrDir, "bin")
@@ -260,6 +270,8 @@ class SSHTerminalProvider(
         env["PREFIX"] = usrDir.absolutePath
         if (sshConfig.authType == SSHAuthType.PASSWORD && sshConfig.password != null) {
             env["SSHPASS"] = sshConfig.password
+        } else if (sshConfig.authType == SSHAuthType.PUBLIC_KEY && !sshConfig.passphrase.isNullOrEmpty()) {
+            env["SSHPASS"] = sshConfig.passphrase
         }
         env["TERMUX_PREFIX"] = usrDir.absolutePath
         env["LD_LIBRARY_PATH"] = "${nativeLibDir}:${binDir.absolutePath}"

@@ -130,14 +130,15 @@ class SettingsViewModel(
         _showOpensshMissingDialog.value = false
     }
 
-    private fun areSshToolsInstalled(): Boolean {
+    private fun areSshToolsInstalled(config: SSHConfig): Boolean {
         val filesDir = getApplication<Application>().filesDir
         val ubuntuRoot = File(filesDir, "usr/var/lib/proot-distro/installed-rootfs/ubuntu")
         
         val sshExecutable = File(ubuntuRoot, "usr/bin/ssh")
         val sshpassExecutable = File(ubuntuRoot, "usr/bin/sshpass")
         
-        return sshExecutable.exists() && sshpassExecutable.exists()
+        val needsSshpass = config.authType == com.ai.assistance.operit.terminal.data.SSHAuthType.PASSWORD || !config.passphrase.isNullOrEmpty()
+        return sshExecutable.isFile && (!needsSshpass || sshpassExecutable.isFile)
     }
     
     private fun isOpensshServerInstalled(): Boolean {
@@ -345,18 +346,13 @@ class SettingsViewModel(
     
     suspend fun setSSHEnabled(enabled: Boolean) = sshConfigMutex.withLock {
         if (enabled) {
-            checkNotNull(sshConfigManager.getConfig()) { "SSH connection configuration is missing" }
-            if (!areSshToolsInstalled()) {
+            val config = checkNotNull(sshConfigManager.getConfig()) { "SSH connection configuration is missing" }
+            if (!areSshToolsInstalled(config)) {
                 _showSshToolsMissingDialog.value = true
                 return@withLock
             }
             
-            // 检查是否启用了反向隧道且是否安装了openssh-server
-            val config = _sshConfig.value
-            if (config != null && config.enableReverseTunnel && !isOpensshServerInstalled()) {
-                _showOpensshMissingDialog.value = true
-                return@withLock
-            }
+            // 反向文件隧道由应用内 Apache SSHD 提供，无需 Ubuntu openssh-server。
             
             sshConfigManager.setEnabled(true)
             loadSSHEnabled()

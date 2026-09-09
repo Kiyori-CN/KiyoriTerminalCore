@@ -68,7 +68,9 @@ class SSHDServerManager private constructor(private val filesDir: File) {
     suspend fun startServer(sshConfig: SSHConfig): Boolean = withContext(Dispatchers.IO) {
         try {
             if (sshServer?.isStarted == true) {
-                Log.w(TAG, "SSHD服务器已在运行")
+                check(currentConfig?.localSshPort == sshConfig.localSshPort &&
+                    currentConfig?.localSshUsername == sshConfig.localSshUsername &&
+                    currentConfig?.localSshPassword == sshConfig.localSshPassword) { "Local SSH server is already in use with different connection settings" }
                 return@withContext true
             }
             
@@ -80,6 +82,8 @@ class SSHDServerManager private constructor(private val filesDir: File) {
             
             // 创建SSHD服务器实例
             val server = SshServer.setUpDefaultServer()
+            // 反向隧道仅需本机端点，不能无意向整个局域网开放手机存储。
+            server.host = "127.0.0.1"
             
             // 配置端口
             server.port = sshConfig.localSshPort

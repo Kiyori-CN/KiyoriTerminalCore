@@ -93,8 +93,8 @@ class SSHFileSystemProvider(
             Log.d(TAG, "Remote home directory: $home")
             home
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to get remote home directory, using /root as fallback", e)
-            "/root"
+            // HOME 解析失败不能把 ~/ 写入另一账号的目录。
+            throw IllegalStateException("Unable to resolve the SSH user's home directory", e)
         }
     }
     

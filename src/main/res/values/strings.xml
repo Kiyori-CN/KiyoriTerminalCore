@@ -204,13 +204,11 @@
     <string name="font_size_label">字体大小 (px)</string>
     <string name="target_fps_dialog_title">设置渲染帧率</string>
     <string name="target_fps_label">目标帧率 (FPS)</string>
-    <string name="target_fps_hint">范围：15–120，建议 30–60。数值越高越流畅，但功耗更高。</string>
     <string name="font_path_dialog_title">设置字体文件路径</string>
     <string name="font_path_label">字体文件路径</string>
     <string name="font_path_hint">填写 Android 可读取的有效字体文件绝对路径。留空时使用已设置的系统字体名称或内置字体。</string>
     <string name="font_name_dialog_title">设置系统字体名称</string>
     <string name="font_name_label">系统字体名称</string>
-    <string name="font_name_placeholder">例如: monospace, serif, sans-serif</string>
     <string name="font_name_hint">文件路径优先于系统字体名称。常用名称：monospace、serif、sans-serif；名称由系统解析，不支持时可能显示系统默认字体。</string>
 
     <!-- Virtual Keyboard Settings -->

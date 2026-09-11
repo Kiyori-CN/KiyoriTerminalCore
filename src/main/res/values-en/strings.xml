@@ -24,7 +24,7 @@
     <string name="setup_refresh">Refresh detection</string>
     <string name="setup_progress_running">Environment setup %1$d/%2$d: running. See terminal output below.</string>
     <string name="setup_progress_failed">Environment setup stopped at %1$d/%2$d. Check terminal errors, fix them, then refresh detection.</string>
-    <string name="setup_progress_complete">Environment setup %1$d/%2$d completed; selected tools passed verification.</string>
+    <string name="setup_progress_complete">Environment setup completed: %1$d/%2$d; selected tools passed verification.</string>
     <string name="setup_needs_configuration">Needs configuration</string>
     <string name="setup_changes_notice">Installing pnpm/TypeScript enables required installation scripts and sets the global packageImportMethod to copy so TypeScript 7 can locate its bundled libraries. Project dependencies may use more storage.</string>
     <string name="dialog_confirm">I Understand</string>
@@ -206,13 +206,11 @@
     <string name="font_size_label">Font Size (px)</string>
     <string name="target_fps_dialog_title">Set Render Frame Rate</string>
     <string name="target_fps_label">Target Frame Rate (FPS)</string>
-    <string name="target_fps_hint">Range: 15–120. Recommended: 30–60. Higher values are smoother but use more power.</string>
     <string name="font_path_dialog_title">Set Font File Path</string>
     <string name="font_path_label">Font File Path</string>
     <string name="font_path_hint">Enter the absolute path to a valid font file readable by Android. Leave empty to use the configured system family or bundled font.</string>
     <string name="font_name_dialog_title">Set System Font Name</string>
     <string name="font_name_label">System Font Name</string>
-    <string name="font_name_placeholder">e.g.: monospace, serif, sans-serif</string>
     <string name="font_name_hint">A configured file takes priority. Common families: monospace, serif, sans-serif. Android resolves the name and may use its default for unsupported families.</string>
 
     <!-- Virtual Keyboard Settings -->

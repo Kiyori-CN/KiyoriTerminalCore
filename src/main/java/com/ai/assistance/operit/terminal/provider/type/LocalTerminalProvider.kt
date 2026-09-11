@@ -476,7 +476,7 @@ class LocalTerminalProvider(
                 val chunk =
                     shell.outputChannel.receiveCatching().getOrNull()
                         ?: break
-                    builder.append(chunk)
+                builder.append(chunk)
             }
         }
     }

@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.ai.assistance.operit.terminal.R
@@ -100,6 +101,7 @@ private fun SSHConfigCard(
     var deleteError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val observableResources = LocalResources.current
     
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -221,7 +223,7 @@ private fun SSHConfigCard(
                                     throw error
                                 } catch (error: Exception) {
                                     Log.e("SSHConfigScreen", "Unable to delete SSH configuration", error)
-                                    deleteError = context.getString(R.string.ssh_config_delete_failed)
+                                    deleteError = observableResources.getString(R.string.ssh_config_delete_failed)
                                 } finally {
                                     isDeleting = false
                                 }
@@ -278,6 +280,7 @@ fun SSHConfigEditDialog(
     var saveError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val observableResources = LocalResources.current
     val draft = SSHConfigDraft(host, port, username, authType, password, privateKeyPath, passphrase,
         enableKeepAlive, keepAliveInterval, enableReverseTunnel, remoteTunnelPort, localSshPort, localSshUsername, localSshPassword)
     val validationErrors = draft.errors
@@ -729,7 +732,7 @@ fun SSHConfigEditDialog(
                                 throw error
                             } catch (error: Exception) {
                                 Log.e("SSHConfigScreen", "Unable to save SSH configuration", error)
-                                saveError = context.getString(R.string.ssh_config_save_failed)
+                                saveError = observableResources.getString(R.string.ssh_config_save_failed)
                             } finally {
                                 isSaving = false
                             }
